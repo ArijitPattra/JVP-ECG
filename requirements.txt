@@ -1,0 +1,9 @@
+# Tested with Python 3.11 on macOS (Apple silicon), CPU only.
+numpy==2.4.6
+scipy==1.17.1
+pandas==3.0.6
+scikit-learn==1.9.1
+torch==2.14.1
+matplotlib==3.11.2
+openpyxl==3.1.5
+tabulate==0.10.0

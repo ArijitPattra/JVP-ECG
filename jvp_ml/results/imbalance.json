@@ -1,0 +1,22 @@
+{
+  "sample_size_auc_halfwidth_0p05_prev0p115": {
+    "auc0.85": {
+      "n_pos": 94,
+      "n_neg": 723,
+      "n_total": 817
+    },
+    "auc0.9": {
+      "n_pos": 68,
+      "n_neg": 523,
+      "n_total": 591
+    },
+    "auc0.95": {
+      "n_pos": 37,
+      "n_neg": 285,
+      "n_total": 322
+    }
+  },
+  "n_pos_for_sens0p9_halfwidth0p1": 35,
+  "current_halfwidth_auc0p90": 0.1688913839221442,
+  "prevalence": 0.11538461538461539
+}

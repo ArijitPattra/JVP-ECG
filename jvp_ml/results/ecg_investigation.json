@@ -1,0 +1,15 @@
+{
+  "six_gaussian_r2_median": 0.999871849163674,
+  "six_gaussian_r2_p10": 0.9984986368461848,
+  "n_leads_r2_gt_0999": 76,
+  "n_leads": 104,
+  "flat_fraction_median": 0.34299999999999997,
+  "pr_median_ms": 84.175,
+  "n_pr_lt_120": 51,
+  "n_pr_gt_200": 0,
+  "crude_vc_auroc": 0.6485507246376813,
+  "crude_vc_agree": 39,
+  "n": 52,
+  "crude_vc_sens": 0.3333333333333333,
+  "crude_vc_spec": 0.8043478260869565
+}

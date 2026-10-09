@@ -1,0 +1,47 @@
+{
+  "agreement": {
+    "n": 47,
+    "ecg_rvh_criteria_sens": 0.16666666666666666,
+    "ecg_rvh_criteria_spec": 0.8478260869565217,
+    "rule_sens": 0.6666666666666666,
+    "rule_spec": 0.6521739130434783,
+    "n_rvh_tp": 1,
+    "n_rule_tp": 4,
+    "n_rule_tn": 30
+  },
+  "alignment_test": {
+    "stored windows": {
+      "raw_window_LR": [
+        0.9701086956521742,
+        0.9454710144927536,
+        0.9818840579710144
+      ],
+      "shift_invariant_fourier_LR": [
+        0.8739130434782609,
+        0.8167572463768117,
+        0.9425724637681159
+      ]
+    },
+    "random circular shift": {
+      "raw_window_LR": [
+        0.561231884057971,
+        0.4468297101449275,
+        0.6216485507246376
+      ],
+      "shift_invariant_fourier_LR": [
+        0.8739130434782609,
+        0.8167572463768117,
+        0.9425724637681159
+      ]
+    },
+    "trough_position_median": 0.6875,
+    "trough_position_iqr": [
+      0.5625,
+      0.765625
+    ],
+    "trough_position_median_by_class": {
+      "control": 0.703125,
+      "diseased": 0.6171875
+    }
+  }
+}
