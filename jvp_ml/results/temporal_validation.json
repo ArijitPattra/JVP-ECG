@@ -1,0 +1,92 @@
+{
+  "frozen_model": {
+    "n_train": 52,
+    "n_train_diseased": 6,
+    "n_new": 6,
+    "thresholds": {
+      "youden": {
+        "threshold": 0.3312547504901886,
+        "cv_specificity_at_lock": 0.6521739130434783,
+        "cv_sensitivity_at_lock": 1.0,
+        "detected": 6,
+        "sensitivity": 1.0,
+        "ci": [
+          0.5407418735600995,
+          1.0
+        ]
+      },
+      "spec90": {
+        "threshold": 0.47233752410276036,
+        "cv_specificity_at_lock": 0.9130434782608695,
+        "cv_sensitivity_at_lock": 0.5,
+        "detected": 4,
+        "sensitivity": 0.6666666666666666,
+        "ci": [
+          0.22277809550351213,
+          0.9567281317072583
+        ]
+      }
+    },
+    "probability_median": 0.54325
+  },
+  "per_batch_auroc": {
+    "JVP 1D-CNN": {
+      "first_batch_diseased": 0.8804347826086957,
+      "later_batch_diseased": 0.9891304347826088
+    },
+    "JVP L1-LR": {
+      "first_batch_diseased": 0.9094202898550725,
+      "later_batch_diseased": 0.9746376811594203
+    },
+    "JVP Fourier LR": {
+      "first_batch_diseased": 0.782608695652174,
+      "later_batch_diseased": 0.9710144927536232
+    },
+    "ECG LR": {
+      "first_batch_diseased": 0.9057971014492754,
+      "later_batch_diseased": 0.8405797101449276
+    }
+  },
+  "batch_signature_among_diseased": {
+    "L1-LR all features": 0.5166666666666667,
+    "LR Fourier descriptors": 0.49537037037037035,
+    "samples_per_window_median": {
+      "first_batch_diseased": 12.0,
+      "later_batch_diseased": 10.0,
+      "mannwhitney_p": 0.037220850379772664
+    },
+    "vc_ratio_median": {
+      "first_batch_diseased": 1.123364822577123,
+      "later_batch_diseased": 1.1483865544163643,
+      "mannwhitney_p": 0.8181818181818182
+    },
+    "relphase3_sin_median": {
+      "first_batch_diseased": -0.7388639959017671,
+      "later_batch_diseased": -0.7236697409398499,
+      "mannwhitney_p": 0.8181818181818182
+    },
+    "y_descent_median": {
+      "first_batch_diseased": 0.38335867204338053,
+      "later_batch_diseased": 0.351008511638928,
+      "mannwhitney_p": 0.9372294372294373
+    }
+  },
+  "acquisition": {
+    "fs": {
+      "first_batch_controls": 12.381555758930098,
+      "first_batch_diseased": 11.736755783390663,
+      "later_batch_diseased": 8.716057235234985
+    },
+    "dur": {
+      "first_batch_controls": 0.87453,
+      "first_batch_diseased": 0.9681649999999999,
+      "later_batch_diseased": 1.031895
+    },
+    "fs_auroc_lower_is_disease_pooled": 0.7445652173913043,
+    "fs_auroc_lower_is_disease_first_batch": 0.5615942028985508,
+    "cnn_score_vs_fs_controls_spearman": {
+      "rho": 0.09540843077094686,
+      "p": 0.5282206662619876
+    }
+  }
+}

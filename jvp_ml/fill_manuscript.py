@@ -97,6 +97,14 @@ def main():
     a1, a2, pdl = delong_paired(y, pc, pe)
     v["DLTXT:cnn_ecglr"] = f"AUROC {a1:.2f} vs {a2:.2f} on repeat-averaged scores, $P={fp(pdl)}$"
     v["DLP:cnn_ecglr"] = f"$P={fp(pdl)}$"
+    pb_ = P_all[ecg_best].mean(0)
+    a1, a2, pdl = delong_paired(y, pc, pb_)
+    v["DLTXT:cnn_ecgbest"] = f"AUROC {a1:.2f} vs {a2:.2f} on repeat-averaged scores, $P={fp(pdl)}$"
+    v["DLP:cnn_ecgbest"] = f"$P={fp(pdl)}$"
+    v["ECGBEST_NAME"] = {"LR": "logistic regression", "SVM": "a support vector machine", "RF": "a random forest",
+                         "GBM": "gradient boosting", "1D-CNN": "a 1D-CNN"}[ecg_best.split("| ")[1].split()[0]]
+    kb = cohen_kappa(pc >= 0.5, pb_ >= 0.5); v["KAPPABEST"] = f"{kb:.2f}"
+    v["KAPPABESTTXT"] = "slightly" if kb < 0.2 else "fairly" if kb < 0.4 else "moderately" if kb < 0.6 else "substantially"
     kc = cohen_kappa(pc >= 0.5, pe >= 0.5); v["KAPPACNN"] = f"{kc:.2f}"
     v["KAPPACNNTXT"] = "slightly" if kc < 0.2 else "fairly" if kc < 0.4 else "moderately" if kc < 0.6 else "substantially"
     cp = json.load(open(RES / "cnn_permutation.json"))
@@ -108,7 +116,7 @@ def main():
         v[f"AL:{k1}|raw"] = f"{al[k2]['raw_window_LR'][0]:.3f}"; v[f"AL:{k1}|fourier"] = f"{al[k2]['shift_invariant_fourier_LR'][0]:.3f}"
     v["TROUGHPOS"] = f"{al['trough_position_median']:.2f}"; v["TROUGHIQR"] = "--".join(f"{q:.2f}" for q in al["trough_position_iqr"])
     v["TROUGHDIS"] = f"{al['trough_position_median_by_class']['diseased']:.2f}"; v["TROUGHCTL"] = f"{al['trough_position_median_by_class']['control']:.2f}"
-    for tok, feat in (("SLOPE", "slope_a_to_c"), ("REL3", "relphase3_sin"), ("YD", "y_descent")):
+    for tok, feat in (("SLOPE", "slope_a_to_c"), ("REL3", "relphase3_sin"), ("REL2", "relphase2_sin"), ("YD", "y_descent")):
         aa = roc_auc_score(y, J[feat]); v[f"AUC_{tok}"] = f"{max(aa, 1 - aa):.2f}"
         v[f"P_{tok}"] = fp(mannwhitneyu(J[feat][y == 1], J[feat][y == 0]).pvalue)
     alias_perm = {"jvp_lr": "JVP | LR physiology features", "ecg_lr": "ECG | LR V1/V2 features",
@@ -151,11 +159,40 @@ def main():
             v[f"OP:{mdl}|{m}"] = f"{r[m]:.2f}"
     for _, r in PVT.iterrows():
         v[f"PV:{r.model}|{r.prevalence:g}|ppv"] = f"{r.ppv:.2f}"; v[f"PV:{r.model}|{r.prevalence:g}|npv"] = f"{r.npv:.3f}"
-    for k, d in ij["sample_size_auc_halfwidth_0p05_prev0p115"].items():
+    for k, d in ij["sample_size_auc_halfwidth_0p05"].items():
         for kk, vv in d.items():
             v[f"SS:{k}|{kk}"] = str(vv)
     v["SSHW"] = f"{ij['current_halfwidth_auc0p90']:.2f}"; v["SSSENS"] = str(ij["n_pos_for_sens0p9_halfwidth0p1"])
     v["PREVPCT"] = f"{100 * y.mean():.1f}"; v["ACCALLNEG"] = f"{100 * (1 - y.mean()):.1f}"
+    first = sub.batch == sub.batch.iloc[0]
+    v.update({"N1": str(int(first.sum())), "NPOS1": str(int(sub.y[first].sum())), "N2": str(int((~first).sum())),
+              "NPOS2": str(int(sub.y[~first].sum())), "NPOS_FOLD": str(int(y.sum()) // 3),
+              "IMBRATIO": f"{(1 - y).sum() / y.sum():.0f}"})
+    tv = json.load(open(RES / "temporal_validation.json"))
+    fz = tv["frozen_model"]; v["TV:n"] = str(fz["n_new"]); v["TV:ntrain"] = str(fz["n_train"])
+    for name, t in fz["thresholds"].items():
+        v[f"TV:{name}|k"] = str(t["detected"]); v[f"TV:{name}|ci"] = f"{t['ci'][0]:.2f}--{t['ci'][1]:.2f}"
+        v[f"TV:{name}|cvspec"] = f"{100 * t['cv_specificity_at_lock']:.0f}\\%"; v[f"TV:{name}|cvsens"] = f"{t['cv_sensitivity_at_lock']:.2f}"
+        v[f"TV:{name}|sens"] = f"{t['sensitivity']:.2f}"
+    for mdl, d in tv["per_batch_auroc"].items():
+        v[f"PB:{mdl}|first"] = f"{d['first_batch_diseased']:.2f}"; v[f"PB:{mdl}|later"] = f"{d['later_batch_diseased']:.2f}"
+    bs = tv["batch_signature_among_diseased"]
+    v["BS:l1"] = f"{bs['L1-LR all features']:.2f}"; v["BS:fourier"] = f"{bs['LR Fourier descriptors']:.2f}"
+    for f in ("samples_per_window", "vc_ratio", "relphase3_sin", "y_descent"):
+        d = bs[f"{f}_median"]
+        v[f"BS:{f}|first"] = f"{d['first_batch_diseased']:.2f}"; v[f"BS:{f}|later"] = f"{d['later_batch_diseased']:.2f}"
+        v[f"BS:{f}|p"] = fp(d["mannwhitney_p"])
+    v["BS:samples_per_window|first"], v["BS:samples_per_window|later"] = (
+        f"{bs['samples_per_window_median'][k]:.0f}" for k in ("first_batch_diseased", "later_batch_diseased"))
+    acq = tv["acquisition"]
+    for k, nd in (("fs", 1), ("dur", 2)):
+        for g in ("first_batch_controls", "first_batch_diseased", "later_batch_diseased"):
+            v[f"ACQ:{k}|{g}"] = f"{acq[k][g]:.{nd}f}"
+    v["ACQ:fsauc_pooled"] = f"{acq['fs_auroc_lower_is_disease_pooled']:.2f}"
+    v["ACQ:fsauc_first"] = f"{acq['fs_auroc_lower_is_disease_first_batch']:.2f}"
+    v["ACQ:rho"] = f"{acq['cnn_score_vs_fs_controls_spearman']['rho']:.2f}"; v["ACQ:rhop"] = fp(acq["cnn_score_vs_fs_controls_spearman"]["p"])
+    Pp = pd.read_csv(RES / "jvp_ecg_spearman_p.csv", index_col=0)
+    v["RHO_NSIG"] = str(int((Pp < 0.05).sum().sum())); v["RHO_NTOT"] = str(Pp.size)
     rows_t = []
     for _, r in IM.iterrows():
         rows_t.append(" & ".join([r.features.replace("JVP waveform", "JVP waveform"), r.model, r.strategy.replace("undersampling ensemble", "undersampling"),
@@ -171,6 +208,8 @@ def main():
         "duplicate-cycle-within-subject": "Counted once",
         "cycle-content-differs": "Both versions retained as separate cycles",
         "jvp-column-length-mismatch": "Truncated to common length",
+        "ecg-amplitude-header-missing": "Column read by its lead header (identical to the single-lead workbook)",
+        "jvp-duplicate-of-other-subject": "Flagged",
     }
     rows = []
     for iss, g in qc.groupby("issue"):

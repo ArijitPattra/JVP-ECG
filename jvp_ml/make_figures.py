@@ -328,11 +328,12 @@ def fig_sensitivity():
     S = pd.read_csv(RES / "sensitivity_analyses.csv")
     an = list(dict.fromkeys(S.analysis)); models = list(dict.fromkeys(S.model))
     fig, ax = plt.subplots(figsize=(120 * MM, 55 * MM))
-    w = 0.8 / len(an); cols = ["#2a78d6", "#eb6834", "#1baf7a", "#4a3aa7"]
+    w = 0.8 / len(an); cols = ["#2a78d6", "#eb6834", "#1baf7a", "#4a3aa7", "#c2417d", "#8a8f98"]
     for k, a in enumerate(an):
         d = S[S.analysis == a].set_index("model").loc[models]
         ax.bar(np.arange(len(models)) + (k - (len(an) - 1) / 2) * w, d.auroc, width=w * 0.92, color=cols[k], label=a)
-    ax.set_xticks(range(len(models))); ax.set_xticklabels(models, rotation=25, ha="right", fontsize=6); ax.set_ylim(0.5, 1.02)
+    ax.set_xticks(range(len(models))); ax.set_xticklabels(models, rotation=25, ha="right", fontsize=6)
+    ax.set_ylim(min(0.5, np.floor(10 * S.auroc.min()) / 10), 1.02)
     ax.set_ylabel("AUROC"); ax.legend(frameon=False, fontsize=5.8, ncol=2, loc="lower left", bbox_to_anchor=(0, 1.0))
     ax.grid(axis="y", color=GRID, lw=0.5); ax.set_axisbelow(True)
     save(fig, "figS1_sensitivity")

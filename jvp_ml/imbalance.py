@@ -1,4 +1,4 @@
-"""Class-imbalance analysis (6 diseased vs 46 non-diseased; prevalence 0.115).
+"""Class-imbalance analysis (prevalence of the cohort taken from data/subjects.csv).
 
 1. Correction strategies, applied strictly inside the training folds (also inside the inner tuning folds):
    tabular LR / RF on JVP and ECG features: none, class weighting, SMOTE, undersampling ensemble (EasyEnsemble);
@@ -184,7 +184,7 @@ def hanley_mcneil_se(auc, n_pos, n_neg):
     return np.sqrt((auc * (1 - auc) + (n_pos - 1) * (q1 - auc ** 2) + (n_neg - 1) * (q2 - auc ** 2)) / (n_pos * n_neg))
 
 
-def sample_size(auc=0.90, prev=0.115, half_width=0.05):
+def sample_size(auc, prev, half_width=0.05):
     for n_pos in range(5, 2000):
         n_neg = int(round(n_pos * (1 - prev) / prev))
         if 1.96 * hanley_mcneil_se(auc, n_pos, n_neg) <= half_width:
@@ -197,7 +197,8 @@ def main():
     ap.add_argument("--figure-only", action="store_true", help="redraw Fig. S3 from saved results")
     a = ap.parse_args()
     if a.figure_only:
-        return figure(pd.read_csv(RES / "imbalance_strategies.csv"), pd.read_csv(RES / "imbalance_ppv_npv.csv"))
+        return figure(pd.read_csv(RES / "imbalance_strategies.csv"), pd.read_csv(RES / "imbalance_ppv_npv.csv"),
+                      json.load(open(RES / "imbalance.json"))["prevalence"])
     R, RC, EP = (2, 1, 30) if a.quick else (a.repeats, a.cnn_repeats, 120)
     sub, J, E, waves, _ = load(); S, y = sub.subject.values, sub.y.values
     sets = {"JVP features": J[JVP_FEATS].values, "ECG features": E.values}
@@ -224,7 +225,8 @@ def main():
     OP = operating_points(y, P_all); OP.to_csv(RES / "imbalance_operating_points.csv", index=False)
     print(OP.round(3).to_string())
     tb = pd.read_csv(RES / "table_benchmark.csv").set_index("model")
-    prevs = [0.02, 0.05, 0.115, 0.20]
+    prev = float(y.mean())
+    prevs = sorted({0.02, 0.05, 0.10, 0.20, round(prev, 3)})
     pv = []
     for short, name in MAIN.items():
         se, sp = tb.loc[name, "sens"], tb.loc[name, "spec"]
@@ -234,17 +236,17 @@ def main():
     print(PV.round(3).to_string())
     ss = {}
     for auc in (0.85, 0.90, 0.95):
-        npos, nneg = sample_size(auc); ss[f"auc{auc}"] = dict(n_pos=npos, n_neg=nneg, n_total=npos + nneg)
+        npos, nneg = sample_size(auc, prev); ss[f"auc{auc}"] = dict(n_pos=npos, n_neg=nneg, n_total=npos + nneg)
     n_sens = int(np.ceil(1.96 ** 2 * 0.9 * 0.1 / 0.1 ** 2))
-    se_now = hanley_mcneil_se(0.90, 6, 46)
-    out = dict(sample_size_auc_halfwidth_0p05_prev0p115=ss, n_pos_for_sens0p9_halfwidth0p1=n_sens,
-               current_halfwidth_auc0p90=1.96 * se_now, prevalence=float(y.mean()))
+    se_now = hanley_mcneil_se(0.90, int(y.sum()), int((1 - y).sum()))
+    out = dict(sample_size_auc_halfwidth_0p05=ss, n_pos_for_sens0p9_halfwidth0p1=n_sens,
+               current_halfwidth_auc0p90=1.96 * se_now, prevalence=prev)
     json.dump(out, open(RES / "imbalance.json", "w"), indent=2, default=float)
     print(json.dumps(out, indent=2, default=float))
-    figure(T, PV)
+    figure(T, PV, prev)
 
 
-def figure(T, PV):
+def figure(T, PV, prev):
     from make_figures import C_ACC, C_MOD, GRID, INK2, MM, panel, plt, save
     fig, axg = plt.subplots(2, 3, figsize=(180 * MM, 125 * MM), gridspec_kw=dict(wspace=0.45, hspace=1.05))
     axs = axg.ravel(); axs[5].set_axis_off()
@@ -258,7 +260,7 @@ def figure(T, PV):
         dd = d[d.features == fs].set_index("strategy").loc[order]
         axs[0].plot(range(4), dd.auroc, marker=mk, color=cols[fs], label=f"{fs.split()[0]} AUROC", **sty)
         axs[0].plot(range(4), dd.auprc, marker=mk, color=cols[fs], ls="--", label=f"{fs.split()[0]} AUPRC", **sty)
-    axs[0].axhline(0.115, color=INK2, lw=0.6, ls=":"); axs[0].text(3.2, 0.13, "chance AUPRC", fontsize=5, color=INK2, ha="right")
+    axs[0].axhline(prev, color=INK2, lw=0.6, ls=":"); axs[0].text(3.2, prev + 0.015, "chance AUPRC", fontsize=5, color=INK2, ha="right")
     axs[0].set_ylim(0, 1.03); axs[0].set_ylabel("Score"); axs[0].set_title("Discrimination (LR)")
     for fs, mk in [("JVP features", "o"), ("ECG features", "s")]:
         dd = d[d.features == fs].set_index("strategy").loc[order]
@@ -278,11 +280,11 @@ def figure(T, PV):
     axs[3].bar(x + 0.27, c["citl"], 0.26, color=INK2, label="mean predicted $-$ prevalence")
     axs[3].set_xticks(x); axs[3].set_xticklabels(["none", "weighted BCE", "focal loss", "oversampling"], fontsize=6, rotation=30, ha="right"); axs[3].set_ylim(0, 1.05)
     axs[3].set_title("Sensor 1D-CNN"); axs[3].legend(**leg)
-    grid = np.linspace(0.01, 0.3, 60)
+    grid = np.linspace(0.01, max(0.3, prev + 0.05), 60)
     for m, col, ls in [("JVP 1D-CNN", C_MOD["JVP"], "-"), ("JVP L1-LR", C_MOD["JVP"], ":"), ("ECG LR", C_MOD["ECG"], "-")]:
         dd = PV[PV.model == m]; se, sp = dd.sens.iloc[0], dd.spec.iloc[0]
         axs[4].plot(grid * 100, [ppv_npv(se, sp, g)[0] for g in grid], color=col, ls=ls, lw=1.2, label=m)
-    axs[4].axvline(11.5, color=GRID, lw=0.8); axs[4].text(12.2, 0.95, "this\ncohort", fontsize=5, color=INK2, va="top")
+    axs[4].axvline(100 * prev, color=GRID, lw=0.8); axs[4].text(100 * prev + 0.7, 0.95, "this\ncohort", fontsize=5, color=INK2, va="top")
     axs[4].set_xlabel("Prevalence (%)"); axs[4].set_ylabel("PPV"); axs[4].set_ylim(0, 1.02); axs[4].set_title("PPV vs prevalence")
     axs[4].legend(**{**leg, "bbox_to_anchor": (0.5, -0.24)})
     for ax, L in zip(axs, "abcde"):

@@ -9,7 +9,10 @@ The same JVP cycle is repeated across the V1, V2 and V1_V2 workbooks of a subjec
 cycles are de-duplicated by content. Column positions differ between workbooks, so
 columns are located from the header text.
 
-Usage: python load_data.py <raw_data_dir> <out_dir>
+Several raw directories (recording batches) can be given; subject IDs must be unique across them, and the
+batch (directory name) of each subject is recorded in subjects.csv.
+
+Usage: python load_data.py <raw_data_dir> [<raw_data_dir> ...] <out_dir>
 """
 import hashlib
 import re
@@ -49,8 +52,15 @@ def read_workbook(path):
         out["ecg_t"] = _num(cols[tcols[1]])
         k = tcols[1] + 1
         amp_cols = []
-        while k < ncol and "amplitude" in txt(h1[k]).lower():
-            amp_cols.append(k)
+        out["ecg_unlabelled_amp"] = 0
+        while k < ncol:
+            if "amplitude" in txt(h1[k]).lower():
+                amp_cols.append(k)
+            elif not txt(h1[k]) and "lead" in txt(h0[k]).lower() and _num(cols[k]):
+                amp_cols.append(k)  # amplitude column under a lead header but without its unit header
+                out["ecg_unlabelled_amp"] += 1
+            else:
+                break
             k += 1
         out["ecg_cols"] = [(txt(h0[c]) or txt(h0[c - 1])) for c in amp_cols]
         out["ecg_amp"] = [_num(cols[c]) for c in amp_cols]
@@ -79,11 +89,14 @@ def fix_ecg_time(t, n, ref_duration=None):
     return t, note
 
 
-def main(raw_dir, out_dir):
-    raw_dir, out_dir = Path(raw_dir), Path(out_dir)
+def main(raw_dirs, out_dir):
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    subj_dirs = sorted([p for p in raw_dir.iterdir() if p.is_dir() and p.name.startswith("HS")],
+    subj_dirs = sorted([p for d in map(Path, raw_dirs) for p in d.iterdir() if p.is_dir() and p.name.startswith("HS")],
                        key=lambda p: int(p.name[2:]))
+    dup_ids = sorted({p.name for p in subj_dirs if [q.name for q in subj_dirs].count(p.name) > 1})
+    if dup_ids:
+        raise SystemExit(f"subject IDs present in more than one raw directory: {dup_ids}")
     cyc_rows, ecg_rows, subj_rows, qc = [], [], [], []
     ecg_hash_owner = {}
     for sd in subj_dirs:
@@ -96,6 +109,9 @@ def main(raw_dir, out_dir):
             leads_in_name = m.group(1).split("_")
             cyc = int(m.group(2))
             wb = read_workbook(f)
+            if wb.get("ecg_unlabelled_amp"):
+                qc.append((s, f.name, "ecg-amplitude-header-missing",
+                           f"{wb['ecg_unlabelled_amp']} amplitude column(s) without unit header; read by lead header"))
             labels.add(wb["label"])
             hdr_ids.add(wb["header_subject"])
             h = _hash(wb["jvp_I"])
@@ -152,11 +168,11 @@ def main(raw_dir, out_dir):
             for i in range(len(amp)):
                 ecg_rows.append((s, lead, i, tt[i], amp[i]))
         lab = sorted(l for l in labels if l)[0] if any(labels) else ""
-        subj_rows.append((s, lab, int(lab.lower() == "diseased"), len(cycles), ",".join(sorted(ecg))))
+        subj_rows.append((s, lab, int(lab.lower() == "diseased"), len(cycles), ",".join(sorted(ecg)), sd.parent.name))
 
     cyc_df = pd.DataFrame(cyc_rows, columns=["subject", "cycle", "idx", "t", "current_A", "force_N"])
     ecg_df = pd.DataFrame(ecg_rows, columns=["subject", "lead", "idx", "t", "mV"])
-    subj_df = pd.DataFrame(subj_rows, columns=["subject", "label", "y", "n_cycles", "ecg_leads"])
+    subj_df = pd.DataFrame(subj_rows, columns=["subject", "label", "y", "n_cycles", "ecg_leads", "batch"])
     qc_df = pd.DataFrame(qc, columns=["subject", "file", "issue", "detail"])
 
     # within-subject duplicated cycles (identical waveform under different cycle numbers)
@@ -168,6 +184,14 @@ def main(raw_dir, out_dir):
         for h, cs in inv.items():
             if len(cs) > 1:
                 qc_df.loc[len(qc_df)] = (s, "*", "duplicate-cycle-within-subject", f"cycles {cs} identical")
+
+    # sensor windows identical to a window of another subject
+    owner = {}
+    for (s, c), g in cyc_df.groupby(["subject", "cycle"], sort=False):
+        h = _hash(g.force_N.values)
+        if h in owner and owner[h][0] != s:
+            qc_df.loc[len(qc_df)] = (s, "*", "jvp-duplicate-of-other-subject", f"cycle {c} identical to {owner[h][0]} cycle {owner[h][1]}")
+        owner.setdefault(h, (s, c))
 
     # force vs current calibration check
     cal = []
@@ -192,6 +216,8 @@ def main(raw_dir, out_dir):
         fh.write(f"* Subject folders: {len(subj_df)} (missing IDs: "
                  f"{sorted(set(range(1, max(int(s[2:]) for s in subj_df.subject) + 1)) - set(int(s[2:]) for s in subj_df.subject))})\n")
         fh.write(f"* Labels: {subj_df.label.value_counts().to_dict()}\n")
+        fh.write(f"* Recording batches (raw directories): "
+                 f"{subj_df.groupby(['batch', 'label']).size().to_dict()}\n")
         fh.write(f"* JVP cycles (content-unique): {cyc_df.groupby(['subject','cycle']).ngroups}; "
                  f"samples/cycle median {cyc_df.groupby(['subject','cycle']).size().median():.0f} "
                  f"(range {cyc_df.groupby(['subject','cycle']).size().min()}-{cyc_df.groupby(['subject','cycle']).size().max()})\n")
@@ -203,4 +229,6 @@ def main(raw_dir, out_dir):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    if len(sys.argv) < 3:
+        raise SystemExit(__doc__)
+    main(sys.argv[1:-1], sys.argv[-1])

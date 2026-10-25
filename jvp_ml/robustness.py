@@ -165,11 +165,21 @@ def main():
     sub, J, E, waves, _ = load()
     st = {"agreement": agreement(sub, J, E), "alignment_test": alignment_test(sub, R=4 if a.quick else 20)}
     print(json.dumps(st, indent=1, default=str), flush=True)
-    rows += run_set("primary (all 52)", sub, J, E, waves, R, a.quick)
+    rows += run_set("primary (all)", sub, J, E, waves, R, a.quick)
     s2, J2, E2, w2, _ = load(exclude=QC_EXCLUDE)
     rows += run_set("QC-flagged workbooks excluded", s2, J2, E2, w2, R, a.quick)
     s3, J3, E3, w3, _ = load(signal="current_A")
     rows += run_set("raw current instead of force", s3, J3, E3, w3, R, a.quick)
+    # recording batches: every participant of a later batch is diseased, so check that the result is not a batch effect
+    allsub = pd.read_csv(HERE / "data/subjects.csv")
+    first_batch = allsub.batch.iloc[0]
+    later = allsub[allsub.batch != first_batch]
+    if len(later):
+        s5, J5, E5, w5, _ = load(exclude=tuple(later.subject))
+        rows += run_set("first recording batch only", s5, J5, E5, w5, R, a.quick)
+        old_pos = allsub[(allsub.batch == first_batch) & (allsub.y == 1)].subject
+        s6, J6, E6, w6, _ = load(exclude=tuple(old_pos))
+        rows += run_set("later-batch diseased vs controls", s6, J6, E6, w6, R, a.quick)
     cyc = pd.read_csv(HERE / "data/jvp_cycles.csv", dtype={"cycle": str})
     first = cyc.groupby("subject").cycle.transform(lambda c: c == c.iloc[0])
     J4, w4 = jvp_subject_features(cyc[first]); J4 = J4.set_index("subject").loc[sub.subject]

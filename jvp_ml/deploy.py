@@ -14,8 +14,8 @@ The deployed system uses ONLY the rGO/CuO sensor readings; ECG is never required
         * a folder of participant sub-folders with JVP_*_Cycle*.xlsx workbooks (only the sensor columns are read).
       Prints and writes one row per participant: number of windows, probability, screen result at each threshold.
 
-The model was developed on 52 participants (6 diseased) and has not been externally validated: outputs are for
-research use only.
+The model is developed on all participants in data/ (counts are stored in model.json) and has not been externally
+validated: outputs are for research use only.
 """
 import argparse
 import json
@@ -67,7 +67,7 @@ def train(out):
     meta = dict(model="start-agnostic 1D-CNN (circular padding, test-time shift averaging)", inputs="sensor readings only",
                 n_participants=int(len(sub)), n_diseased=int(sub.y.sum()), n_windows=len(waves), epochs=EPOCHS,
                 seeds=list(SEEDS), window_points=int(len(waves[0][2])), thresholds=thresholds_from_cv(sub.y.values),
-                note="Research use only; developed on 52 participants without external validation.")
+                note=f"Research use only; developed on {len(sub)} participants ({int(sub.y.sum())} diseased) without external validation.")
     json.dump(meta, open(out / "model.json", "w"), indent=2)
     print(json.dumps(meta, indent=2))
 

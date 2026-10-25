@@ -20,7 +20,8 @@ undocumented, so every sensor feature and model is invariant to a circular shift
 
 ECG timing is never used to locate JVP waves.
 
-> **Status: feasibility study.** 52 participants, of whom 6 are diseased. See [Interpreting the results](#interpreting-the-results)
+> **Status: feasibility study.** 58 participants, of whom 12 are diseased. Six of the diseased participants come from a later
+> recording batch without controls, which is a potential confound. See [Interpreting the results](#interpreting-the-results)
 > before quoting any number.
 
 ## Repository layout
@@ -35,12 +36,13 @@ jvp_ml/
                            circular 1D-CNN (primary sensor model), physiology-hybrid CNN
   evaluation.py            repeated stratified subject-level CV, bootstrap CIs, permutation test, DeLong test
   run_benchmark.py         main benchmark: 11 sensor models and 5 ECG comparator models
-  robustness.py            QC-exclusion, current-vs-force, single-window, noise and decimation, alignment test
+  robustness.py            QC-exclusion, current-vs-force, recording-batch, single-window, noise and decimation, alignment test
   cnn_permutation.py       permutation tests for the 1D-CNN (reduced configuration) and sparse logistic regression
   ecg_investigation.py     ECG fidelity checks; crude raw-sample v/c vs diagnosis
   imbalance.py             class-imbalance strategies, operating points, PPV/NPV vs prevalence, sample size
   make_figures.py          figures and tables (coherent bootstrap CIs)
   deploy.py                sensor-only deployment: train the primary 1D-CNN on all participants; predict from sensor readings
+  temporal_validation.py   frozen first-batch model applied to a later batch; per-batch AUROC; batch and sampling-rate checks
   fill_manuscript.py       fills every number into manuscript/manuscript_template.tex -> Overleaf folder
   manuscript/              LaTeX template, bibliography (verified DOIs), naturemag.bst
   figures/                 all figures (PDF + PNG)
@@ -59,8 +61,9 @@ scikit-learn's `GradientBoostingClassifier` is the boosting baseline.
 
 ## Data
 
-**Participant data are not included** in this repository. `load_data.py` expects one folder per participant
-(`HS1 … HS54`), each with workbooks named `JVP_<V1|V2|V1_V2>_Cycle<k>.xlsx`. A workbook holds:
+**Participant data are not included** in this repository. `load_data.py` expects one or more batch folders, each
+holding one folder per participant (`HS1 … HS54` in the first batch, `HS55 … HS60` in the second; IDs must be unique
+across batches). Each participant folder has workbooks named `JVP_<V1|V2|V1_V2>_Cycle<k>.xlsx`. A workbook holds:
 
 - one manually segmented JVP cycle: time (s), current (A), force (N);
 - one ECG beat: time (s), amplitude (mV) for the lead(s) in the file name;
@@ -72,10 +75,11 @@ Column positions vary between workbooks and are located from the header text. Da
 ## Running
 
 ```bash
-./run_all.sh "/path/to/Arijit JVP Sensor1_Unknown Subjects"
+./run_all.sh "/path/to/batch 1" "/path/to/batch 2"
 ```
 
-All random seeds are fixed. The run takes about 1–1.5 h on an 8-core CPU. Every number in the manuscript is written by
+To repeat the temporal check, also set `FROZEN` (a `deploy_model/` trained on the earlier batch before the later one
+arrived) and `LATER` (the later batch folder). All random seeds are fixed. The run takes about 1–1.5 h on an 8-core CPU. Every number in the manuscript is written by
 `fill_manuscript.py` from `results/`, so edit `manuscript/manuscript_template.tex`, never the generated `.tex`.
 
 ## Sensor-only deployment (research use)
@@ -91,17 +95,17 @@ python deploy.py predict --input sensor_windows.csv --out predictions.csv
 read. The output gives one probability per participant and a screen result at two operating thresholds taken from the
 cross-validated scores:
 
-- `youden`: cross-validated sensitivity 1.00, specificity 0.65;
-- `spec90`: sensitivity 0.50, specificity 0.91.
+- `youden`: cross-validated sensitivity 0.75, specificity 0.96;
+- `spec90`: sensitivity 0.75, specificity 0.91.
 
-The model was developed on 52 participants (6 diseased) without external validation, and is not a medical device.
+The model was developed on 58 participants (12 diseased) without external validation, and is not a medical device.
 Trained weights are not distributed, because they are derived from participant data; run `train` with your own data
 access.
 
 ## Evaluation protocol
 
 - **Subject-level splits only.** Cycles from one participant are never in both the training and the test fold.
-- **Repeated stratified 3-fold CV.** With 6 positives this gives 2 per test fold. There are 30 repeats for fast models and 10 for CNN, ROCKET and tree models.
+- **Repeated stratified 3-fold CV.** With 12 positives this gives 4 per test fold. There are 30 repeats for fast models and 10 for CNN, ROCKET and tree models.
 - **Nested tuning.** Hyper-parameters (inner grid search) and decision thresholds (Youden index) are chosen inside each training fold.
 - **Statistics.** 95% CIs come from 2,000 stratified participant bootstraps of the repeat-averaged AUROC. The permutation test re-runs the whole CV on 200 label permutations. Paired DeLong tests compare models.
 
@@ -109,40 +113,53 @@ access.
 
 | Model | AUROC (95% CI) |
 |---|---|
-| **JVP sensor: start-agnostic 1D-CNN** (best sensor model, selected among 11) | **0.839 (0.71–0.95)** |
-| JVP sensor: sparse (L1) logistic regression, 33 features | 0.824 (0.69–0.95), permutation P = 0.010 |
-| JVP sensor: physiology-hybrid CNN (waveform + *v/c*, *a→c* slope) | 0.808 (0.61–0.96) |
-| JVP sensor: rule *v/c* > 1, no training | 0.707 (0.47–0.91) |
-| **ECG V1/V2: logistic regression** (best ECG model) | **0.870 (0.76–0.96)**, permutation P = 0.005 |
+| **JVP sensor: start-agnostic 1D-CNN** (pre-specified primary model; chosen on the first batch) | **0.906 (0.82–0.98)**, permutation P = 0.010 (reduced configuration) |
+| JVP sensor: circular ROCKET | 0.916 (0.84–0.98) |
+| JVP sensor: sparse (L1) logistic regression, 33 features | 0.912 (0.83–0.97), permutation P = 0.005 |
+| JVP sensor: physiology-hybrid CNN (waveform + *v/c*, *a→c* slope) | 0.907 (0.80–0.98) |
+| JVP sensor: rule *v/c* > 1, no training | 0.741 (0.58–0.88) |
+| **ECG V1/V2: random forest** (best ECG model) | **0.893 (0.80–0.97)** |
+| ECG V1/V2: logistic regression | 0.843 (0.74–0.93), permutation P = 0.005 |
 
-- **Sensor vs ECG.** The sensor CNN and the best ECG model do not differ significantly (DeLong P = 0.68).
-- **CNN permutation test.** It had to use a reduced configuration and gave P = 0.099, not significant. The similarly performing sparse model is significant (P = 0.010).
-- **Hypotheses.** The hypothesised *v/c* ratio is weakly discriminative (AUROC 0.71, P = 0.11). An exploratory waveform-asymmetry descriptor (third-harmonic relative phase) gives AUROC 0.95.
+- **Sensor vs ECG.** The sensor CNN and the best ECG model do not differ significantly (DeLong P = 0.73).
+- **Frozen-model check.** The CNN trained on the first 52 participants, frozen before the later batch arrived, flagged
+  6 of 6 later patients at its Youden threshold (95% CI 0.54–1.00) and 4 of 6 at its 90%-specificity threshold. The
+  later batch has no controls, so this measures sensitivity only.
+- **Hypotheses.** The hypothesised *v/c* ratio is modestly discriminative (AUROC 0.74, P = 0.011). An exploratory
+  waveform-asymmetry descriptor (third-harmonic relative phase) gives AUROC 0.95.
 
 ## Interpreting the results
 
 Labels are physician diagnoses, independently verified.
 
-1. **Window alignment matters.** Logistic regression on the raw window reaches AUROC 0.970 on the stored windows but
-   0.561 after random circular shifts. Shift-invariant Fourier descriptors are unaffected. Positional information
+1. **The recording batch is a potential confound.** All six later-batch participants are diseased, and their windows
+   were sampled more sparsely (median 8.7 vs about 12 samples/s). The sensor models separate the later patients from
+   controls much better than the first-batch patients (CNN AUROC 0.99 vs 0.88 in the pooled CV), but the ECG does not
+   (0.84 vs 0.91). Re-analysed on the first batch alone, the CNN gives 0.83. Start-agnostic features cannot tell the
+   diseased of the two batches apart (CV AUROC 0.50–0.52), and the CNN score of controls does not follow sampling rate
+   (ρ = 0.10). Still, more pronounced disease cannot be separated from a batch effect, so treat 0.83 as the conservative
+   estimate.
+2. **Window alignment matters.** Logistic regression on the raw window reaches AUROC 0.990 on the stored windows but
+   0.482 after random circular shifts. Shift-invariant Fourier descriptors are unaffected. Positional information
    can only be used if windows are extracted by a documented, sensor-only rule, so the primary analyses are
    start-agnostic.
-2. **The ECG beats are parametric reconstructions** (six-Gaussian fit, median R² = 0.9999) with no AV-conduction
-   information (PR < 120 ms in 51 of 52 participants). There are two leads and one beat per participant, so the ECG
+3. **The ECG beats are parametric reconstructions** (six-Gaussian fit, median R² = 0.9999) with no AV-conduction
+   information (PR < 120 ms in 57 of 58 participants). There are two leads and one beat per participant, so the ECG
    benchmark is not a clinical 12-lead ECG.
-3. **The pilot is small.** There are 6 diseased participants and the sensor model was selected post hoc, so all estimates are imprecise and
-   optimistic. About 94 diseased participants are needed to estimate an AUROC of 0.85 within ±0.05.
+4. **The pilot is small.** There are 12 diseased participants and the primary sensor model was selected post hoc on the
+   first batch, so all estimates are imprecise and optimistic. About 97 diseased participants are needed to estimate
+   an AUROC of 0.85 within ±0.05.
 
-## Class imbalance (6 diseased vs 46 non-diseased)
+## Class imbalance (12 diseased vs 46 non-diseased)
 
 `imbalance.py` compares correction strategies, always applied inside the training folds: none, class weighting,
-SMOTE, undersampling ensemble, and focal loss / oversampling for the CNN. It reports AUROC, AUPRC (random = 0.115),
+SMOTE, undersampling ensemble, and focal loss / oversampling for the CNN. It reports AUROC, AUPRC (random = 0.207),
 MCC, sensitivity/specificity at 0.5 and at in-fold thresholds, and calibration-in-the-large. It also reports PPV/NPV
 at screening prevalences and the sample size a validation study needs.
 
-The corrections mainly change the operating point and calibration. They inflate predicted risk by 0.09–0.38, and
-for the sensor feature models resampling slightly lowers AUROC. Choosing the threshold inside the training folds
-achieves the same operating point without any correction.
+The corrections mainly change the operating point and calibration. They inflate predicted risk by 0.14–0.28, and
+they neither consistently improve nor harm the sensor models' AUROC. Choosing the threshold inside the training folds
+achieves a similar operating point without any correction.
 
 ## Data-quality issues handled by `load_data.py`
 
@@ -153,6 +170,7 @@ achieves the same operating point without any correction.
 | ECG time stored in the wrong unit | HS3, HS21, HS28 | Repaired |
 | Single-lead header names the wrong lead | HS1, HS2, HS37 | Lead taken from the file name |
 | Same cycle saved under two cycle numbers | HS15, HS18, HS43, HS45 | Counted once |
+| V2 amplitude column without unit header | HS55–HS58 | Read by its lead header (identical to the V2 workbook) |
 
 Force is a per-recording linear calibration of current (|r| ≈ 0.99998), so the two channels are redundant.
 
