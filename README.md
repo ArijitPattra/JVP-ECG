@@ -1,12 +1,12 @@
-# Wearable rGO/CuO JVP sensor + machine learning, benchmarked against ECG
+# Wearable rGO/CuO JVP sensor + machine learning, compared with the 12-lead ECG
 
-Analysis code for the manuscript *"A wearable rGO/CuO piezoresistive jugular venous pulse sensor with
-physiology-informed machine learning for screening heart disease, benchmarked against the electrocardiogram"*
+Analysis code for the manuscript *"A wearable rGO/CuO piezoresistive jugular venous pulse sensor and start-agnostic machine learning for
+heart-disease screening: a pilot study with a 12-lead electrocardiogram comparator"*
 (Pattra, Chatterjee, Dey; School of Electrical and Computer Sciences, IIT Bhubaneswar).
 
 The pipeline analyses jugular venous pulse (JVP) windows recorded by a neck-mounted piezoresistive sensor.
 
-**Intended use: the sensor alone.** At deployment a person is screened from sensor readings only. ECG leads V1/V2 are
+**Intended use: the sensor alone.** At deployment a person is screened from sensor readings only. The 12-lead ECG is
 used solely to build comparator models that benchmark conventional electrical screening in the same participants.
 No model combines the two modalities, and the ECG is never used to train, align or select the sensor models.
 
@@ -31,13 +31,13 @@ run_all.sh                 one-command pipeline
 requirements.txt
 jvp_ml/
   load_data.py             parse the Excel workbooks, de-duplicate cycles, repair ECG time units, QC report
-  features.py              start-agnostic JVP features (trough anchoring, Fourier descriptors; 33 features); ECG V1/V2
+  features.py              start-agnostic JVP features (trough anchoring, Fourier descriptors; 33 features); 12-lead ECG features (axis, Sokolow-Lyon, RVH/LVH criteria)
   models.py                v/c rule, LR/L1-LR/SVM/RF/GBM (nested tuning, in-fold thresholds), circular ROCKET,
                            circular 1D-CNN (primary sensor model), physiology-hybrid CNN
   evaluation.py            repeated stratified subject-level CV, bootstrap CIs, permutation test, DeLong test
-  run_benchmark.py         main benchmark: 11 sensor models and 5 ECG comparator models
+  run_benchmark.py         main benchmark: 11 sensor models, 6 12-lead ECG and 2 V1/V2 comparator models
   robustness.py            QC-exclusion, current-vs-force, recording-batch, single-window, noise and decimation, alignment test
-  cnn_permutation.py       permutation tests for the 1D-CNN (reduced configuration) and sparse logistic regression
+  cnn_permutation.py       permutation test for the 1D-CNN (reduced configuration)
   ecg_investigation.py     ECG fidelity checks; crude raw-sample v/c vs diagnosis
   imbalance.py             class-imbalance strategies, operating points, PPV/NPV vs prevalence, sample size
   make_figures.py          figures and tables (coherent bootstrap CIs)
@@ -95,8 +95,8 @@ python deploy.py predict --input sensor_windows.csv --out predictions.csv
 read. The output gives one probability per participant and a screen result at two operating thresholds taken from the
 cross-validated scores:
 
-- `youden`: cross-validated sensitivity 0.75, specificity 0.96;
-- `spec90`: sensitivity 0.75, specificity 0.91.
+- `youden`: cross-validated sensitivity 0.83, specificity 0.91;
+- `spec90`: sensitivity 0.83, specificity 0.91.
 
 The model was developed on 58 participants (12 diseased) without external validation, and is not a medical device.
 Trained weights are not distributed, because they are derived from participant data; run `train` with your own data
@@ -113,39 +113,40 @@ access.
 
 | Model | AUROC (95% CI) |
 |---|---|
-| **JVP sensor: start-agnostic 1D-CNN** (pre-specified primary model; chosen on the first batch) | **0.906 (0.82–0.98)**, permutation P = 0.010 (reduced configuration) |
-| JVP sensor: circular ROCKET | 0.916 (0.84–0.98) |
-| JVP sensor: sparse (L1) logistic regression, 33 features | 0.912 (0.83–0.97), permutation P = 0.005 |
-| JVP sensor: physiology-hybrid CNN (waveform + *v/c*, *a→c* slope) | 0.907 (0.80–0.98) |
+| **JVP sensor: start-agnostic 1D-CNN** (pre-specified primary model; chosen on the first batch) | **0.908 (0.80–0.98)**, permutation P = 0.010 (reduced configuration) |
+| JVP sensor: physiology-hybrid CNN (waveform + *v/c*, *a→c* slope) | 0.905 (0.78–0.99) |
+| JVP sensor: sparse (L1) logistic regression, 33 features | 0.900 (0.82–0.96), permutation P = 0.005 |
+| JVP sensor: circular ROCKET | 0.895 (0.78–0.98) |
 | JVP sensor: rule *v/c* > 1, no training | 0.741 (0.58–0.88) |
-| **ECG V1/V2: random forest** (best ECG model) | **0.893 (0.80–0.97)** |
-| ECG V1/V2: logistic regression | 0.843 (0.74–0.93), permutation P = 0.005 |
+| **ECG 12-lead: 1D-CNN on the beat** (best ECG model) | **0.953 (0.90–0.99)** |
+| ECG 12-lead: random forest / logistic regression (reference) | 0.893 (0.74–0.98) / 0.872 (0.74–0.96), permutation P = 0.005 |
+| ECG V1/V2 only: random forest / logistic regression | 0.902 (0.82–0.97) / 0.872 (0.78–0.94) |
 
-- **Sensor vs ECG.** The sensor CNN and the best ECG model do not differ significantly (DeLong P = 0.73).
+- **Sensor vs ECG.** The sensor CNN does not differ significantly from the 12-lead ECG CNN (DeLong P = 0.25) or from
+  12-lead ECG logistic regression (P = 0.88). On the first batch alone the sensor CNN gives 0.79 and 12-lead ECG
+  logistic regression 0.79.
 - **Frozen-model check.** The CNN trained on the first 52 participants, frozen before the later batch arrived, flagged
   6 of 6 later patients at its Youden threshold (95% CI 0.54–1.00) and 4 of 6 at its 90%-specificity threshold. The
   later batch has no controls, so this measures sensitivity only.
 - **Hypotheses.** The hypothesised *v/c* ratio is modestly discriminative (AUROC 0.74, P = 0.011). An exploratory
-  waveform-asymmetry descriptor (third-harmonic relative phase) gives AUROC 0.95.
+  waveform-asymmetry descriptor (third-harmonic relative phase) is the strongest single sensor feature.
 
 ## Interpreting the results
 
 Labels are physician diagnoses, independently verified.
 
-1. **The recording batch is a potential confound.** All six later-batch participants are diseased, and their windows
-   were sampled more sparsely (median 8.7 vs about 12 samples/s). The sensor models separate the later patients from
-   controls much better than the first-batch patients (CNN AUROC 0.99 vs 0.88 in the pooled CV), but the ECG does not
-   (0.84 vs 0.91). Re-analysed on the first batch alone, the CNN gives 0.83. Start-agnostic features cannot tell the
-   diseased of the two batches apart (CV AUROC 0.50–0.52), and the CNN score of controls does not follow sampling rate
-   (ρ = 0.10). Still, more pronounced disease cannot be separated from a batch effect, so treat 0.83 as the conservative
-   estimate.
+1. **The recording batch is a potential confound.** All six later-batch participants (HS53–HS58 in the current
+   numbering) are diseased, and their windows were sampled more sparsely (median 8.7 vs about 12 samples/s). Both the
+   sensor and the 12-lead ECG models separate the later patients from controls much better than the first-batch
+   patients (sensor CNN 0.99 vs 0.84; ECG logistic regression 0.99 vs 0.82). Treat the first-batch estimates as the
+   conservative ones.
 2. **Window alignment matters.** Logistic regression on the raw window reaches AUROC 0.990 on the stored windows but
-   0.482 after random circular shifts. Shift-invariant Fourier descriptors are unaffected. Positional information
-   can only be used if windows are extracted by a documented, sensor-only rule, so the primary analyses are
+   0.467 after random circular shifts. Shift-invariant Fourier descriptors are unaffected, so the primary analyses are
    start-agnostic.
-3. **The ECG beats are parametric reconstructions** (six-Gaussian fit, median R² = 0.9999) with no AV-conduction
-   information (PR < 120 ms in 57 of 58 participants). There are two leads and one beat per participant, so the ECG
-   benchmark is not a clinical 12-lead ECG.
+3. **The 12-lead ECG beats are parametric reconstructions** (six-Gaussian fit, median R² = 0.9999), the limb leads do
+   not obey Einthoven's law (median deviation 40% of lead II), PR is below 120 ms in every participant, and the
+   beats of diseased participants are far more alike than those of controls (median between-participant r 0.74 vs
+   0.32). The ECG comparison is therefore not a comparison with a recorded clinical 12-lead ECG and may be optimistic.
 4. **The pilot is small.** There are 12 diseased participants and the primary sensor model was selected post hoc on the
    first batch, so all estimates are imprecise and optimistic. About 97 diseased participants are needed to estimate
    an AUROC of 0.85 within ±0.05.
@@ -157,20 +158,19 @@ SMOTE, undersampling ensemble, and focal loss / oversampling for the CNN. It rep
 MCC, sensitivity/specificity at 0.5 and at in-fold thresholds, and calibration-in-the-large. It also reports PPV/NPV
 at screening prevalences and the sample size a validation study needs.
 
-The corrections mainly change the operating point and calibration. They inflate predicted risk by 0.14–0.28, and
+The corrections mainly change the operating point and calibration. They inflate predicted risk by 0.12–0.28, and
 they neither consistently improve nor harm the sensor models' AUROC. Choosing the threshold inside the training folds
 achieves a similar operating point without any correction.
 
 ## Data-quality issues handled by `load_data.py`
 
-| Issue | Participants | Handling |
+| Issue | Participants (current numbering) | Handling |
 |---|---|---|
-| ECG identical to another participant's | HS42, HS43, HS48, HS52 | Flagged; excluded in sensitivity analysis |
-| Workbook header names another participant | HS31, HS43, HS48 | Flagged; excluded in sensitivity analysis |
-| ECG time stored in the wrong unit | HS3, HS21, HS28 | Repaired |
-| Single-lead header names the wrong lead | HS1, HS2, HS37 | Lead taken from the file name |
+| 12-lead ECG identical to another participant's | HS1, HS35, HS42, HS43, HS48, HS52 | Flagged; excluded in sensitivity analysis |
+| 12-lead V1/V2 differ from the single-lead workbooks | HS1, HS2, HS3, HS7, HS35, HS45 | 12-lead file used |
+| 12-lead time stored in ms | HS41, HS42, HS50 | Converted to s |
 | Same cycle saved under two cycle numbers | HS15, HS18, HS43, HS45 | Counted once |
-| V2 amplitude column without unit header | HS55–HS58 | Read by its lead header (identical to the V2 workbook) |
+| Participants renumbered between deliveries | HS9, HS10, HS14, HS31, HS32, HS53, HS54 | Matched by sensor-window content (`map_subjects.py`) |
 
 Force is a per-recording linear calibration of current (|r| ≈ 0.99998), so the two channels are redundant.
 

@@ -14,9 +14,12 @@ circular shift of the window:
   * beat-to-beat similarity (maximum circular cross-correlation between windows).
 Only the sensor signal is used; ECG timing is never used to locate JVP features.
 
-ECG: one reconstructed beat per lead (V1, V2). R and S amplitudes, R/S ratio, QRS
-duration, P and T amplitudes, PR and QT intervals; the RVH criteria R(V1) >= 0.7 mV and
-R/S(V1) >= 1 are included (Hancock et al., Circulation 2009).
+ECG: one reference beat per lead for all 12 standard leads (V1-V6, I, II, III, aVR, aVL, aVF). Per lead: R and
+S amplitudes, R/S ratio, R-|S|, QRS duration, P and T amplitudes, PR and QT intervals. Global 12-lead measures:
+median QRS duration over leads, PR and QT in lead II, Bazett-corrected QT (beat length as RR), frontal QRS axis
+(net QRS deflection in I and aVF), Sokolow-Lyon RVH (R V1 + S V5/V6) and LVH (S V1 + R V5/V6) voltages, R/S in
+V6, and the voltage and axis criteria for RVH and LVH (Hancock et al., Circulation 2009). The V1/V2 subset
+(ECG_V1V2_FEATS) reproduces the earlier two-lead comparator.
 """
 import numpy as np
 import pandas as pd
@@ -180,29 +183,66 @@ def ecg_lead_features(t, v):
     }
 
 
+LEADS12 = ["V1", "V2", "V3", "V4", "V5", "V6", "I", "II", "III", "aVR", "aVL", "aVF"]
+LEAD_FEATS = ["R_mV", "S_mV", "RS_ratio", "R_minus_absS", "QRS_ms", "P_mV", "T_mV", "PR_ms", "QT_ms"]
+RVH_V1V2 = ["RVH_crit_RV1_ge_0.7", "RVH_crit_RS_V1_ge_1"]
+ECG_GLOBAL = ["beat_ms", "QRS_global_ms", "PR_II_ms", "QT_II_ms", "QTc_ms", "QRS_axis_deg", "SokolowLyon_RVH_mV",
+              "SokolowLyon_LVH_mV", "RS_V6_ratio"]
+ECG_CRITERIA = RVH_V1V2 + ["RVH_crit_SL_gt_1.05", "RVH_crit_S_V5V6_ge_0.7", "RVH_crit_RS_V6_le_1", "RVH_crit_RAD",
+                           "RVH_any_criterion", "LVH_crit_SL_ge_3.5"]
+ECG_V1V2_FEATS = [f"{L}_{k}" for L in ("V1", "V2") for k in LEAD_FEATS + ["beat_ms"]] + RVH_V1V2
+ECG12_FEATS = [f"{L}_{k}" for L in LEADS12 for k in LEAD_FEATS] + ECG_GLOBAL + ECG_CRITERIA
+
+
+def ecg_global_features(row):
+    """Clinical 12-lead measures from the per-lead features of one participant."""
+    g = {}
+    qrs = [row[f"{L}_QRS_ms"] for L in LEADS12 if f"{L}_QRS_ms" in row]
+    g["beat_ms"] = row.get("II_beat_ms", row.get("V1_beat_ms", np.nan))
+    g["QRS_global_ms"] = float(np.median(qrs)) if qrs else np.nan
+    g["PR_II_ms"], g["QT_II_ms"] = row.get("II_PR_ms", np.nan), row.get("II_QT_ms", np.nan)
+    g["QTc_ms"] = g["QT_II_ms"] / np.sqrt(g["beat_ms"] / 1000.0)
+    g["QRS_axis_deg"] = float(np.degrees(np.arctan2(row.get("aVF_R_minus_absS", np.nan), row.get("I_R_minus_absS", np.nan))))
+    sv56 = max(abs(row.get("V5_S_mV", 0.0)), abs(row.get("V6_S_mV", 0.0)))
+    rv56 = max(row.get("V5_R_mV", 0.0), row.get("V6_R_mV", 0.0))
+    g["SokolowLyon_RVH_mV"] = row.get("V1_R_mV", np.nan) + sv56
+    g["SokolowLyon_LVH_mV"] = abs(row.get("V1_S_mV", np.nan)) + rv56
+    g["RS_V6_ratio"] = row.get("V6_RS_ratio", np.nan)
+    c = {
+        "RVH_crit_RV1_ge_0.7": row.get("V1_R_mV", np.nan) >= 0.7,
+        "RVH_crit_RS_V1_ge_1": row.get("V1_RS_ratio", np.nan) >= 1.0,
+        "RVH_crit_SL_gt_1.05": g["SokolowLyon_RVH_mV"] > 1.05,
+        "RVH_crit_S_V5V6_ge_0.7": sv56 >= 0.7,
+        "RVH_crit_RS_V6_le_1": g["RS_V6_ratio"] <= 1.0,
+        "RVH_crit_RAD": g["QRS_axis_deg"] > 90.0,  # right-axis deviation (normal -30 to +90 degrees)
+        "LVH_crit_SL_ge_3.5": g["SokolowLyon_LVH_mV"] >= 3.5,
+    }
+    c["RVH_any_criterion"] = any(c[k] for k in c if k.startswith("RVH"))
+    g.update({k: float(v) for k, v in c.items()})
+    return g
+
+
 def ecg_subject_features(ecg_df):
     rows = []
     for s, g in ecg_df.groupby("subject", sort=False):
         row = {"subject": s}
-        for lead in ("V1", "V2"):
+        for lead in LEADS12:
             gl = g[g.lead == lead]
             if len(gl) < 10:
                 continue
             for k, val in ecg_lead_features(gl.t.values, gl.mV.values).items():
                 row[f"{lead}_{k}"] = val
-        if "V1_R_mV" in row:
-            row["RVH_crit_RV1_ge_0.7"] = float(row["V1_R_mV"] >= 0.7)
-            row["RVH_crit_RS_V1_ge_1"] = float(row["V1_RS_ratio"] >= 1.0)
+        row.update(ecg_global_features(row))
         rows.append(row)
     return pd.DataFrame(rows)
 
 
-def ecg_waveforms(ecg_df, n=200):
-    """Resampled V1/V2 beat (2 x n) per subject; missing lead -> zeros."""
+def ecg_waveforms(ecg_df, n=200, leads=tuple(LEADS12)):
+    """Resampled beat (n_leads x n) per subject; missing lead -> zeros."""
     out = {}
     for s, g in ecg_df.groupby("subject", sort=False):
-        X = np.zeros((2, n))
-        for j, lead in enumerate(("V1", "V2")):
+        X = np.zeros((len(leads), n))
+        for j, lead in enumerate(leads):
             gl = g[g.lead == lead]
             if len(gl) >= 10:
                 tt = np.linspace(gl.t.min(), gl.t.max(), n)

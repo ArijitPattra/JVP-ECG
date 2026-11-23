@@ -27,13 +27,14 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from models import CNNModel
-from run_benchmark import HYBRID_FEATS, JVP_FEATS, load
+from features import ECG12_FEATS
+from run_benchmark import ECG_REF, HYBRID_FEATS, JVP_FEATS, load
 
 HERE = Path(__file__).parent
 RES, FIG = HERE / "results", HERE / "figures"
 MAIN = {"JVP rule v/c>1": "JVP | rule v/c>1 (no training)", "JVP LR": "JVP | LR physiology features",
         "JVP 1D-CNN": "JVP | 1D-CNN waveform", "JVP L1-LR": "JVP | L1-LR physiology features (embedded selection)",
-        "ECG LR": "ECG | LR V1/V2 features"}
+        "ECG LR": ECG_REF, "ECG 1D-CNN": "ECG | 1D-CNN 12-lead beat"}
 
 
 # ------------------------------------------------------------------ resampling estimators
@@ -201,7 +202,7 @@ def main():
                       json.load(open(RES / "imbalance.json"))["prevalence"])
     R, RC, EP = (2, 1, 30) if a.quick else (a.repeats, a.cnn_repeats, 120)
     sub, J, E, waves, _ = load(); S, y = sub.subject.values, sub.y.values
-    sets = {"JVP features": J[JVP_FEATS].values, "ECG features": E.values}
+    sets = {"JVP features": J[JVP_FEATS].values, "ECG features": E[ECG12_FEATS].values}
     strategies = ["none", "class weight", "SMOTE", "undersampling ensemble"]
     rows = []
     for fs, X in sets.items():

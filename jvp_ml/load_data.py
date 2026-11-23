@@ -5,6 +5,9 @@ V1, V2 or V1_V2. Every workbook holds:
   * one manually segmented JVP cycle (sensor time, current in A, calibrated force in N),
   * one ECG beat (time, amplitude in mV) for the lead(s) in the file name,
   * a subject-level label ("Diseased" / "Not Diseased").
+From the November 2026 delivery onwards each folder also holds "All leads.xlsx": one reference ECG beat for all
+12 standard leads (V1-V6, I, II, III, aVR, aVL, aVF) on a common time axis, with the subject label. When this file
+is present it is the ECG source; its V1/V2 traces are compared with those of the single-lead workbooks (QC).
 The same JVP cycle is repeated across the V1, V2 and V1_V2 workbooks of a subject, so
 cycles are de-duplicated by content. Column positions differ between workbooks, so
 columns are located from the header text.
@@ -12,7 +15,10 @@ columns are located from the header text.
 Several raw directories (recording batches) can be given; subject IDs must be unique across them, and the
 batch (directory name) of each subject is recorded in subjects.csv.
 
-Usage: python load_data.py <raw_data_dir> [<raw_data_dir> ...] <out_dir>
+With --map <csv> (from map_subjects.py) the recording batch and the earlier subject ID are taken from the map
+instead of from the directory name.
+
+Usage: python load_data.py [--map subject_map.csv] <raw_data_dir> [<raw_data_dir> ...] <out_dir>
 """
 import hashlib
 import re
@@ -67,6 +73,31 @@ def read_workbook(path):
     return out
 
 
+LEADS12 = ["V1", "V2", "V3", "V4", "V5", "V6", "I", "II", "III", "aVR", "aVL", "aVF"]
+
+
+def read_all_leads(path):
+    """12-lead workbook: row 0 = subject ID + 'Label', row 1 = 'Time (in s)', 'Lead V1' ... 'Lead aVF', label."""
+    ws = openpyxl.load_workbook(path, read_only=True, data_only=True).active
+    rows = [list(r) for r in ws.iter_rows(values_only=True)]
+    txt = lambda x: str(x).strip() if x is not None else ""
+    h0, h1 = rows[0], rows[1]
+    tcol = [i for i, v in enumerate(h1) if txt(v).lower().startswith("time")][0]
+    lab_col = [i for i, v in enumerate(h0) if "label" in txt(v).lower()]
+    leads = {}
+    for i, v in enumerate(h1):
+        name = txt(v).replace("Lead", "").strip()
+        if name in LEADS12:
+            leads[name] = i
+    body = rows[2:]
+    t = [r[tcol] for r in body]
+    keep = [k for k, x in enumerate(t) if isinstance(x, (int, float))]
+    return {"header_subject": txt(h0[0]), "label": txt(h1[lab_col[-1]]) if lab_col else "",
+            "t": np.array([float(t[k]) for k in keep]),
+            "leads": {L: np.array([float(body[k][c]) if isinstance(body[k][c], (int, float)) else np.nan for k in keep])
+                      for L, c in leads.items()}}
+
+
 def _hash(x):
     return hashlib.md5(np.round(np.asarray(x, float), 12).tobytes()).hexdigest()[:12]
 
@@ -89,7 +120,7 @@ def fix_ecg_time(t, n, ref_duration=None):
     return t, note
 
 
-def main(raw_dirs, out_dir):
+def main(raw_dirs, out_dir, subject_map=None):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     subj_dirs = sorted([p for d in map(Path, raw_dirs) for p in d.iterdir() if p.is_dir() and p.name.startswith("HS")],
@@ -99,11 +130,19 @@ def main(raw_dirs, out_dir):
         raise SystemExit(f"subject IDs present in more than one raw directory: {dup_ids}")
     cyc_rows, ecg_rows, subj_rows, qc = [], [], [], []
     ecg_hash_owner = {}
+    ecg_dup_pairs = set()
     for sd in subj_dirs:
         s = sd.name
         labels, hdr_ids = set(), set()
         cycles = {}  # hash -> (cycle number, data)
         ecg = {}
+        ecg12 = read_all_leads(sd / "All leads.xlsx") if (sd / "All leads.xlsx").exists() else None
+        if ecg12 is not None:
+            labels.add(ecg12["label"]); hdr_ids.add(ecg12["header_subject"])
+            missing = [L for L in LEADS12 if L not in ecg12["leads"]]
+            if missing:
+                qc.append((s, "All leads.xlsx", "ecg12-lead-missing", ",".join(missing)))
+        single = {}
         for f in sorted(sd.glob("JVP_*_Cycle*.xlsx")):
             m = re.match(r"JVP_(V1_V2|V1|V2)_Cycle(\d+)\.xlsx", f.name)
             leads_in_name = m.group(1).split("_")
@@ -126,8 +165,19 @@ def main(raw_dirs, out_dir):
                 hdr_lead = wb["ecg_cols"][j].replace("_", " ").replace("Lead", "").strip()
                 if hdr_lead and hdr_lead != lead:
                     qc.append((s, f.name, "header-lead-mismatch", f"header says {hdr_lead}, file name says {lead}"))
-                if lead not in ecg:
-                    ecg[lead] = (wb["ecg_t"], amp, f.name)
+                if lead not in single:
+                    single[lead] = (wb["ecg_t"], amp, f.name)
+        if ecg12 is None:
+            ecg = single
+        else:
+            for L, amp in ecg12["leads"].items():
+                ecg[L] = (list(ecg12["t"]), list(amp), "All leads.xlsx")
+            for L in ("V1", "V2"):  # agreement of the 12-lead file with the single-lead workbooks
+                if L in single and L in ecg12["leads"]:
+                    a, b = np.asarray(single[L][1], float), ecg12["leads"][L]
+                    if len(a) != len(b) or np.nanmax(np.abs(a - b)) > 1e-6:
+                        d = f"length {len(a)} vs {len(b)}" if len(a) != len(b) else f"max |diff| {np.nanmax(np.abs(a - b)):.3f} mV"
+                        qc.append((s, "All leads.xlsx", "ecg12-differs-from-single-lead-workbook", f"{L}: {d}"))
         if len(labels) != 1:
             qc.append((s, "*", "label-inconsistent", str(labels)))
         for hid in hdr_ids - {s}:
@@ -159,11 +209,11 @@ def main(raw_dirs, out_dir):
         for lead, (t, amp, fname) in ecg.items():
             ref = np.mean(list(durations.values())) if durations else None
             tt, note = fix_ecg_time(t[: len(amp)] if len(t) >= len(amp) else t, len(amp), ref)
-            if note:
-                qc.append((s, fname, "ecg-time-repaired", f"{lead}: {note}"))
+            if note and not (fname == "All leads.xlsx" and any(q[:3] == (s, fname, "ecg-time-repaired") for q in qc)):
+                qc.append((s, fname, "ecg-time-repaired", note if fname == "All leads.xlsx" else f"{lead}: {note}"))
             hh = _hash(amp)
             if hh in ecg_hash_owner and ecg_hash_owner[hh] != s:
-                qc.append((s, fname, "ecg-duplicate-of-other-subject", f"{lead} identical to {ecg_hash_owner[hh]}"))
+                ecg_dup_pairs.add((ecg_hash_owner[hh], s))
             ecg_hash_owner.setdefault(hh, s)
             for i in range(len(amp)):
                 ecg_rows.append((s, lead, i, tt[i], amp[i]))
@@ -174,6 +224,19 @@ def main(raw_dirs, out_dir):
     ecg_df = pd.DataFrame(ecg_rows, columns=["subject", "lead", "idx", "t", "mV"])
     subj_df = pd.DataFrame(subj_rows, columns=["subject", "label", "y", "n_cycles", "ecg_leads", "batch"])
     qc_df = pd.DataFrame(qc, columns=["subject", "file", "issue", "detail"])
+
+    # ECG copied between participants: the copy is the member of the pair whose 12-lead file disagrees with its
+    # own single-lead workbooks; if neither (or both) disagree, the later participant is flagged
+    differs = set(qc_df.loc[qc_df.issue == "ecg12-differs-from-single-lead-workbook", "subject"])
+    for a, b in sorted(ecg_dup_pairs, key=lambda p: (int(p[0][2:]), int(p[1][2:]))):
+        copy, orig = (a, b) if (a in differs and b not in differs) else (b, a)
+        qc_df.loc[len(qc_df)] = (copy, "All leads.xlsx" if a in differs or b in differs else "*",
+                                 "ecg-duplicate-of-other-subject", f"ECG identical to {orig}")
+    qc_df = qc_df.drop_duplicates().reset_index(drop=True)
+    if subject_map is not None:
+        m = pd.read_csv(subject_map).set_index("subject")
+        subj_df["batch"] = subj_df.subject.map(m["batch"])
+        subj_df["previous_id"] = subj_df.subject.map(m["previous_id"])
 
     # within-subject duplicated cycles (identical waveform under different cycle numbers)
     for s, g in cyc_df.groupby("subject"):
@@ -229,6 +292,10 @@ def main(raw_dirs, out_dir):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
+    args = sys.argv[1:]
+    smap = None
+    if args[:1] == ["--map"]:
+        smap, args = args[1], args[2:]
+    if len(args) < 2:
         raise SystemExit(__doc__)
-    main(sys.argv[1:-1], sys.argv[-1])
+    main(args[:-1], args[-1], smap)

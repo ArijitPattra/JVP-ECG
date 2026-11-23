@@ -11,7 +11,8 @@
    sampling rate alone tracks the label (pooled and within the first batch), and whether the primary CNN's
    out-of-fold score follows the sampling rate among non-diseased participants.
 
-Usage: python temporal_validation.py --frozen <deploy_model dir of the earlier fit> --input <later raw batch dir>
+Usage: python temporal_validation.py --frozen <deploy_model dir of the earlier fit> --input <raw data dir>
+       (only the participants of the later batch, from data/subjects.csv, are read from --input)
 Output: results/temporal_validation.json (aggregate), results/temporal/frozen_model_predictions.csv (per participant)
 """
 import argparse
@@ -26,11 +27,12 @@ from sklearn.metrics import roc_auc_score
 from deploy import predict
 from evaluation import repeated_cv_oof
 from models import TabularModel
-from run_benchmark import FOURIER_FEATS, JVP_FEATS, load
+from run_benchmark import ECG_REF, FOURIER_FEATS, JVP_FEATS, load
 
 HERE = Path(__file__).parent
 MAIN = {"JVP 1D-CNN": "JVP | 1D-CNN waveform", "JVP L1-LR": "JVP | L1-LR physiology features (embedded selection)",
-        "JVP Fourier LR": "JVP | LR Fourier descriptors (shift-invariant)", "ECG LR": "ECG | LR V1/V2 features"}
+        "JVP Fourier LR": "JVP | LR Fourier descriptors (shift-invariant)", "ECG LR": ECG_REF,
+        "ECG 1D-CNN": "ECG | 1D-CNN 12-lead beat", "ECG RF": "ECG | RF 12-lead features"}
 
 
 def clopper_pearson(k, n, a=0.05):
@@ -42,14 +44,16 @@ def clopper_pearson(k, n, a=0.05):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--frozen", default=str(HERE / "archive_2026-10-09_n52/deploy_model"))
-    ap.add_argument("--input", default=str(HERE.parent / "Diseased_HS_Oct_25_2026"))
+    ap.add_argument("--input", default=str(HERE.parent / "Arijit JVP Sensor1"))
     a = ap.parse_args()
     (HERE / "results/temporal").mkdir(parents=True, exist_ok=True)
     out = {}
 
     # 1. frozen model, pre-specified thresholds
     pred_csv = HERE / "results/temporal/frozen_model_predictions.csv"
-    predict(a.frozen, a.input, "force", pred_csv)
+    allsub = pd.read_csv(HERE / "data/subjects.csv")
+    later = set(allsub.subject[allsub.batch != allsub.batch.iloc[0]])
+    predict(a.frozen, a.input, "force", pred_csv, subjects=later)
     P = pd.read_csv(pred_csv)
     meta = json.load(open(Path(a.frozen) / "model.json"))
     fz = dict(n_train=meta["n_participants"], n_train_diseased=meta["n_diseased"], n_new=len(P), thresholds={})

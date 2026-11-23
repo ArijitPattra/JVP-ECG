@@ -27,12 +27,14 @@ ALIAS = {
     "jvp_rf": "JVP | RF physiology features", "jvp_gbm": "JVP | GBM physiology features",
     "jvp_rocket": "JVP | ROCKET (random conv kernels)", "jvp_cnn": "JVP | 1D-CNN waveform",
     "jvp_hcnn": "JVP | Physio-hybrid CNN (waveform + v/c, a-c slope)",
-    "ecg_lr": "ECG | LR V1/V2 features", "ecg_svm": "ECG | SVM V1/V2 features", "ecg_rf": "ECG | RF V1/V2 features",
-    "ecg_gbm": "ECG | GBM V1/V2 features", "ecg_cnn": "ECG | 1D-CNN V1/V2 beat",
+    "ecg_lr": "ECG | LR 12-lead features", "ecg_l1": "ECG | L1-LR 12-lead features", "ecg_svm": "ECG | SVM 12-lead features",
+    "ecg_rf": "ECG | RF 12-lead features", "ecg_gbm": "ECG | GBM 12-lead features", "ecg_cnn": "ECG | 1D-CNN 12-lead beat",
+    "ecg_lr2": "ECG | LR V1/V2 features", "ecg_rf2": "ECG | RF V1/V2 features",
     "jvp_l1": "JVP | L1-LR physiology features (embedded selection)", "jvp_fourier": "JVP | LR Fourier descriptors (shift-invariant)",
 }
-DL = {"lr": "JVP | LR physiology features vs ECG | LR V1/V2 features",
-      "cnn": "JVP | 1D-CNN waveform vs ECG | 1D-CNN V1/V2 beat"}
+DL = {"lr": "JVP | LR physiology features vs ECG | LR 12-lead features",
+      "cnn": "JVP | 1D-CNN waveform vs ECG | 1D-CNN 12-lead beat",
+      "ecg12_vs_2": "ECG | LR 12-lead features vs ECG | LR V1/V2 features"}
 
 
 def fp(p):
@@ -60,7 +62,7 @@ def main():
     spc = cyc.groupby(["subject", "cycle"]).size()
     vc = bootstrap_auc_ci(y, J.vc_ratio.values)
     rule = (J.vc_ratio > 1).values
-    rvh = ((E["V1_R_mV"] >= 0.7) | (E["V1_RS_ratio"] >= 1)).values
+    rvh = (E["RVH_any_criterion"] == 1).values
 
     def auc_of(D, f):
         a = roc_auc_score(y, D[f]); return f"{max(a, 1 - a):.2f}"
@@ -76,7 +78,7 @@ def main():
         "RVH_TP": str(int(rvh[y == 1].sum())), "RVH_SENS": f"{100 * rvh[y == 1].mean():.0f}\\%",
         "RVH_SPEC": f"{100 * (~rvh[y == 0]).mean():.0f}\\%",
         "AUC_LATE": "",
-        "AUC_V1S": auc_of(E, "V1_S_mV"), "AUC_PR": auc_of(E, "V1_PR_ms"),
+        "AUC_V1S": auc_of(E, "V1_S_mV"), "AUC_PR": auc_of(E, "PR_II_ms"),
         "KAPPA": f"{st['kappa_JVP_LR_vs_ECG_LR']:.2f}",
         "NPERM": "200", "PMIN": f"{1 / 201:.3f}",
     }
@@ -86,6 +88,8 @@ def main():
         r = T.loc[name]
         v[f"A:{a}"] = f"{r.auroc:.3f}"
         v[f"ACI:{a}"] = f"{r.auroc:.3f} (95\\% CI {r.auroc_lo:.2f}--{r.auroc_hi:.2f})"
+        v[f"CI:{a}"] = f"95\\% CI {r.auroc_lo:.2f}--{r.auroc_hi:.2f}"
+        v[f"ACIP:{a}"] = f"{r.auroc:.3f}; 95\\% CI {r.auroc_lo:.2f}--{r.auroc_hi:.2f}"
         v[f"SE:{a}"] = f"{100 * r.sens:.0f}\\%"; v[f"SP:{a}"] = f"{100 * r.spec:.0f}\\%"
         v[f"PR:{a}"] = f"{r.auprc:.3f}"
     for a, key in DL.items():
@@ -101,14 +105,23 @@ def main():
     a1, a2, pdl = delong_paired(y, pc, pb_)
     v["DLTXT:cnn_ecgbest"] = f"AUROC {a1:.2f} vs {a2:.2f} on repeat-averaged scores, $P={fp(pdl)}$"
     v["DLP:cnn_ecgbest"] = f"$P={fp(pdl)}$"
-    v["ECGBEST_NAME"] = {"LR": "logistic regression", "SVM": "a support vector machine", "RF": "a random forest",
+    def sigtxt(a1, a2, p):
+        if p >= 0.05:
+            return "did not differ significantly from"
+        return "was significantly lower than" if a1 < a2 else "was significantly higher than"
+    for key, pr in (("cnn_ecgbest", (pc, pb_)), ("cnn_ecglr", (pc, pe))):
+        a1, a2, pdl = delong_paired(y, *pr); v[f"DLSIG:{key}"] = sigtxt(a1, a2, pdl)
+    d = st["delong"][DL["ecg12_vs_2"]]; v["DLSIG:ecg12_vs_2"] = sigtxt(d["auc1"], d["auc2"], d["p"])
+    pl1 = P_all[ALIAS["jvp_l1"]].mean(0); a1, a2, pdl = delong_paired(y, pl1, pb_)
+    v["DLTXT:l1_ecgbest"] = f"AUROC {a1:.2f} vs {a2:.2f}, $P={fp(pdl)}$"; v["DLSIG:l1_ecgbest"] = sigtxt(a1, a2, pdl)
+    v["ECGBEST_NAME"] = {"LR": "logistic regression", "L1-LR": "sparse logistic regression", "SVM": "a support vector machine", "RF": "a random forest",
                          "GBM": "gradient boosting", "1D-CNN": "a 1D-CNN"}[ecg_best.split("| ")[1].split()[0]]
     kb = cohen_kappa(pc >= 0.5, pb_ >= 0.5); v["KAPPABEST"] = f"{kb:.2f}"
     v["KAPPABESTTXT"] = "slightly" if kb < 0.2 else "fairly" if kb < 0.4 else "moderately" if kb < 0.6 else "substantially"
     kc = cohen_kappa(pc >= 0.5, pe >= 0.5); v["KAPPACNN"] = f"{kc:.2f}"
     v["KAPPACNNTXT"] = "slightly" if kc < 0.2 else "fairly" if kc < 0.4 else "moderately" if kc < 0.6 else "substantially"
     cp = json.load(open(RES / "cnn_permutation.json"))
-    lp = json.load(open(RES / "l1lr_permutation.json"))
+    lp = dict(st["permutation"]["JVP | L1-LR physiology features (embedded selection)"], n_perm=int(v["NPERM"]))
     v["L1PERM_P"] = f"{lp['p']:.3f}"; v["L1PERM_N"] = str(lp["n_perm"])
     v["CNNPERM_P"] = f"{cp['p']:.3f}"; v["CNNPERM_N"] = str(cp["n_perm"]); v["CNNPERM_OBS"] = f"{cp['observed_auroc_reduced']:.3f}"
     al = json.load(open(RES / "agreement.json"))["alignment_test"]
@@ -119,8 +132,8 @@ def main():
     for tok, feat in (("SLOPE", "slope_a_to_c"), ("REL3", "relphase3_sin"), ("REL2", "relphase2_sin"), ("YD", "y_descent")):
         aa = roc_auc_score(y, J[feat]); v[f"AUC_{tok}"] = f"{max(aa, 1 - aa):.2f}"
         v[f"P_{tok}"] = fp(mannwhitneyu(J[feat][y == 1], J[feat][y == 0]).pvalue)
-    alias_perm = {"jvp_lr": "JVP | LR physiology features", "ecg_lr": "ECG | LR V1/V2 features",
-                  "jvp_lrvc": "JVP | LR log(v/c) only"}
+    alias_perm = {"jvp_lr": "JVP | LR physiology features", "ecg_lr": "ECG | LR 12-lead features",
+                  "jvp_lrvc": "JVP | LR log(v/c) only", "jvp_l1": "JVP | L1-LR physiology features (embedded selection)"}
     for a, name in alias_perm.items():
         v[f"PERM:{a}"] = f"{st['permutation'][name]['p']:.3f}"
     for _, r in sens.iterrows():
@@ -137,7 +150,47 @@ def main():
               "EI:flat": f"{100 * ei['flat_fraction_median']:.0f}", "EI:pr120": str(ei["n_pr_lt_120"]),
               "EI:pr200": str(ei["n_pr_gt_200"]), "EI:sens": f"{100 * ei['crude_vc_sens']:.0f}\\%",
               "EI:spec": f"{100 * ei['crude_vc_spec']:.1f}\\%", "EI:auc": f"{ei['crude_vc_auroc']:.3f}",
-              "EI:dis": ", ".join(ei["crude_vc_disagreements"])})
+              "EI:dis": ", ".join(ei["crude_vc_disagreements"]),
+              "EI:prlo": f"{ei['pr_range_ms'][0]:.0f}", "EI:prhi": f"{ei['pr_range_ms'][1]:.0f}",
+              "EI:prmed": f"{ei['pr_median_ms']:.0f}", "EI:qrs120": str(ei["qrs_global_ge_120"]),
+              "EI:einth": f"{100 * ei['limb_lead_relative_error_median']['Einthoven_III']:.0f}",
+              "EI:gold": "--".join(f"{100 * ei['limb_lead_relative_error_median'][k]:.0f}" for k in ("aVR", "aVF", "aVL")),
+              "EI:einth10": str(ei["limb_lead_n_einthoven_within_10pct"]), "EI:limbn": str(ei["limb_lead_n"])})
+    sim = ei["ecg_similarity"]
+    v.update({"SIM:ctl": f"{sim['first_batch_controls']['median_r']:.2f}", "SIM:dis1": f"{sim['first_batch_diseased']['median_r']:.2f}",
+              "SIM:dis2": f"{sim['later_batch_diseased']['median_r']:.2f}", "SIM:dis": f"{sim['all_diseased']['median_r']:.2f}",
+              "SIM:x": f"{sim['diseased_vs_controls_median_r']:.2f}",
+              "SIM:dis90": str(sim["all_diseased"]["n_pairs_r_gt_0p9"]), "SIM:disn": str(sim["all_diseased"]["n_pairs"]),
+              "SIM:ctl90": str(sim["first_batch_controls"]["n_pairs_r_gt_0p9"]), "SIM:ctln": str(sim["first_batch_controls"]["n_pairs"]),
+              "SIM:nctl": str(sim["first_batch_controls"]["n"])})
+    # univariate ECG features (12-lead): AUROC (orientation-free) and Mann-Whitney P, plus median by class
+    from features import ECG12_FEATS
+    for f in ECG12_FEATS:
+        x = E[f].values
+        if np.nanstd(x) == 0:
+            continue
+        aa = roc_auc_score(y, np.nan_to_num(x, nan=np.nanmedian(x))); v[f"EAUC:{f}"] = f"{max(aa, 1 - aa):.2f}"
+        v[f"EP:{f}"] = fp(mannwhitneyu(x[y == 1], x[y == 0]).pvalue)
+        v[f"EMED:{f}|dis"] = f"{np.nanmedian(x[y == 1]):.2f}"; v[f"EMED:{f}|ctl"] = f"{np.nanmedian(x[y == 0]):.2f}"
+    ucont = {f: max(roc_auc_score(y, E[f]), 1 - roc_auc_score(y, E[f])) for f in ECG12_FEATS
+             if not f.startswith(("RVH_", "LVH_")) and np.nanstd(E[f]) > 0}
+    v["ECG_NFEAT"] = str(len(ECG12_FEATS)); v["ECG_NFEAT2"] = str(len(__import__("features").ECG_V1V2_FEATS))
+    v["ECG_NUNI_SIG"] = str(int(sum(mannwhitneyu(E[f][y == 1], E[f][y == 0]).pvalue < 0.05 / len(ucont) for f in ucont)))
+    ag = json.load(open(RES / "agreement.json"))["agreement"]
+    for k, (nc, nd) in ((k[6:], vv) for k, vv in ag.items() if k.startswith("n_pos_")):
+        v[f"CRIT:{k}|ctl"] = str(nc); v[f"CRIT:{k}|dis"] = str(nd)
+    v["RVHV1_TP"] = str(ag["n_rvh_v1_tp"]); v["RVHV1_SENS"] = f"{100 * ag['ecg_rvh_v1_criteria_sens']:.0f}\\%"
+    v["RVHV1_SPEC"] = f"{100 * ag['ecg_rvh_v1_criteria_spec']:.0f}\\%"
+    from robustness import QC_EXCLUDE
+    v["QCEXCL"] = ", ".join(QC_EXCLUDE); v["NQCEXCL"] = str(len(QC_EXCLUDE))
+    v["NQCEXCL_WORD"] = {4: "four", 5: "five", 6: "six", 7: "seven"}.get(len(QC_EXCLUDE), str(len(QC_EXCLUDE)))
+    sm = pd.read_csv(HERE / "data/subject_map.csv")
+    ren = sm[sm.subject != sm.previous_id]
+    v["RENUM"] = "; ".join(f"{r.subject} (formerly {r.previous_id})" for r in ren.itertuples())
+    later = sm[sm.batch != sm.batch.iloc[0]].subject
+    v["LATER_IDS"] = f"{later.iloc[0]}--{later.iloc[-1]}"
+    old = sorted(sm[sm.batch != sm.batch.iloc[0]].previous_id, key=lambda q: int(q[2:]))
+    v["LATER_OLD_IDS"] = f"{old[0]}--{old[-1]}"
     IM = pd.read_csv(RES / "imbalance_strategies.csv")
     OPT = pd.read_csv(RES / "imbalance_operating_points.csv").set_index("model")
     PVT = pd.read_csv(RES / "imbalance_ppv_npv.csv")
@@ -201,14 +254,16 @@ def main():
     v["IMBTABLE"] = "\n".join(rows_t)
     v["BENCHTABLE"] = open(RES / "table_benchmark.tex").read().strip().replace("Physio-hybrid CNN (waveform + v/c, a-c slope)", "Physiology-hybrid CNN").replace("ROCKET (random conv kernels)", "ROCKET").replace("L1-LR physiology features (embedded selection)", "L1-LR, all features").replace("LR Fourier descriptors (shift-invariant)", "LR, Fourier descriptors").replace("1D-CNN waveform", "1D-CNN (primary)")
     handling = {
-        "ecg-duplicate-of-other-subject": "Kept in primary analysis; excluded in sensitivity analysis and agreement analysis",
+        "ecg-duplicate-of-other-subject": "Kept in primary analysis; excluded in the sensitivity, agreement and limb-lead analyses",
         "header-subject-mismatch": "Kept; excluded in sensitivity analysis",
         "ecg-time-repaired": "Time axis rescaled to seconds",
         "header-lead-mismatch": "Lead identity taken from file name",
         "duplicate-cycle-within-subject": "Counted once",
         "cycle-content-differs": "Both versions retained as separate cycles",
         "jvp-column-length-mismatch": "Truncated to common length",
-        "ecg-amplitude-header-missing": "Column read by its lead header (identical to the single-lead workbook)",
+        "ecg-amplitude-header-missing": "Column read by its lead header (single-lead workbooks are not used for the ECG)",
+        "ecg12-differs-from-single-lead-workbook": "12-lead workbook used as the ECG source",
+        "ecg12-lead-missing": "Missing lead set to zero",
         "jvp-duplicate-of-other-subject": "Flagged",
     }
     rows = []

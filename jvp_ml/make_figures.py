@@ -16,7 +16,7 @@ from sklearn.metrics import average_precision_score, precision_recall_curve, roc
 
 from features import PHASE, jvp_cycle_features, jvp_fiducials  # noqa: E402
 from models import CNNModel, TabularModel  # noqa: E402
-from run_benchmark import HYBRID_FEATS, JVP_FEATS, load  # noqa: E402
+from run_benchmark import ECG_REF, HYBRID_FEATS, JVP_FEATS, load  # noqa: E402
 
 HERE = Path(__file__).parent
 FIG = HERE / "figures"; FIG.mkdir(exist_ok=True)
@@ -106,12 +106,12 @@ def fig_pipeline():
     top, bot, mid = 17, 1.5, 9.25
     boxes = [
         (X[0], top, "rGO/CuO piezoresistive\nsensor over the EJV\n(current, force)", C_MOD["JVP"]),
-        (X[0], bot, "Reference ECG\nleads V1 and V2\n(one beat per subject)", C_MOD["ECG"]),
+        (X[0], bot, "Reference 12-lead ECG\n(one beat per lead\nper subject)", C_MOD["ECG"]),
         (X[1], top, "Sensor windows: PCHIP\nto 64 points, min-max,\nanchored at x trough", C_MOD["JVP"]),
-        (X[1], bot, "Beat resampling;\nR, S, R/S, P, T,\nPR, QRS, QT", C_MOD["ECG"]),
+        (X[1], bot, "Per-lead R, S, P, T,\nPR, QRS, QT; axis,\nRVH/LVH voltages", C_MOD["ECG"]),
         (X[2], top, "Shift-invariant features:\nv/c, a$\\to$c slope, descents,\nFourier descriptors", C_MOD["JVP"]),
         (X[3], top, "Rule, LR, SVM, RF, GBM,\ncircular ROCKET,\ncircular 1D-CNN, hybrid", C_MOD["JVP"]),
-        (X[3], bot, "Comparator only:\nLR, SVM, RF, GBM,\n1D-CNN", C_MOD["ECG"]),
+        (X[3], bot, "Comparator only:\nLR, L1-LR, SVM, RF,\nGBM, 12-lead 1D-CNN", C_MOD["ECG"]),
         (X[4], mid, "Subject-level repeated\nstratified CV; bootstrap,\npermutation, DeLong", C_ACC),
     ]
     for x, y0, t, c in boxes:
@@ -208,15 +208,16 @@ def fig_benchmark(sub, T):
     ax.axvline(0.5, color=INK2, ls=":", lw=0.7); ax.set_xlim(0.3, 1.05); ax.set_xlabel("AUROC (95% bootstrap CI)")
     ax.grid(axis="x", color=GRID, lw=0.5); ax.set_axisbelow(True)
     from matplotlib.lines import Line2D
-    ax.legend([Line2D([], [], color=C_MOD[k], marker="o", lw=1.6) for k in C_MOD], ["JVP sensor (deployed)", "ECG V1/V2 (comparator)"],
+    ax.legend([Line2D([], [], color=C_MOD[k], marker="o", lw=1.6) for k in C_MOD], ["JVP sensor (deployed)", "ECG (comparator)"],
               frameon=False, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3, fontsize=6)
     ax.set_title("Subject-level cross-validated AUROC", pad=14)
     ax.text(-0.85, 1.06, "a", transform=ax.transAxes, fontsize=9, fontweight="bold")
-    sel = [("ECG | LR V1/V2 features", C_MOD["ECG"], "-"),
+    sel = [("ECG | 1D-CNN 12-lead beat", C_MOD["ECG"], "--"), (ECG_REF, C_MOD["ECG"], "-"),
            ("JVP | rule v/c>1 (no training)", C_MOD["JVP"], ":"), ("JVP | L1-LR physiology features (embedded selection)", C_MOD["JVP"], "--"),
            ("JVP | 1D-CNN waveform", C_MOD["JVP"], "-")]
     names = {"JVP | rule v/c>1 (no training)": "JVP rule v/c>1", "JVP | L1-LR physiology features (embedded selection)": "JVP L1-LR",
-             "JVP | 1D-CNN waveform": "JVP 1D-CNN (primary)", "ECG | LR V1/V2 features": "ECG LR"}
+             "JVP | 1D-CNN waveform": "JVP 1D-CNN (primary)", ECG_REF: "ECG LR 12-lead",
+             "ECG | 1D-CNN 12-lead beat": "ECG 1D-CNN 12-lead"}
     a2, a3 = fig.add_subplot(gs[1]), fig.add_subplot(gs[2])
     for nm, c, ls in sel:
         p = P_all[nm].mean(0); fpr, tpr, _ = roc_curve(y, p); pr, rc, _ = precision_recall_curve(y, p)
@@ -268,11 +269,13 @@ def fig_interpret(sub, J, E, waves):
     if (RES / "cnn_permutation.json").exists():
         cp = json.load(open(RES / "cnn_permutation.json"))
         perm["JVP 1D-CNN"] = dict(observed_auroc=cp["observed_auroc_reduced"], p=cp["p"], null_95=cp["null_95"])
-    if (RES / "l1lr_permutation.json").exists():
+    if "JVP | L1-LR physiology features (embedded selection)" in perm:
+        perm["JVP L1-LR"] = perm["JVP | L1-LR physiology features (embedded selection)"]
+    elif (RES / "l1lr_permutation.json").exists():
         lp = json.load(open(RES / "l1lr_permutation.json"))
         perm["JVP L1-LR"] = dict(observed_auroc=lp["observed_auroc"], p=lp["p"], null_95=lp["null_95"])
     for k, col, nm, ls in [("JVP 1D-CNN", C_MOD["JVP"], "JVP 1D-CNN*", "-"), ("JVP L1-LR", C_MOD["JVP"], "JVP L1-LR", "--"),
-                           ("ECG | LR V1/V2 features", C_MOD["ECG"], "ECG LR", "-")]:
+                           (ECG_REF, C_MOD["ECG"], "ECG LR 12-lead", "-")]:
         if k in perm:
             axs[2].axvline(perm[k]["observed_auroc"], color=col, lw=1.4, ls=ls, label=f"{nm}: p={perm[k]['p']:.3f}")
             axs[2].axvspan(0.5, perm[k]["null_95"], color=col, alpha=0.08)

@@ -1,7 +1,7 @@
 """Sensitivity, robustness and JVP-vs-ECG agreement analyses.
 
 1. QC exclusion: drop subjects whose workbook was copied from another subject
-   (duplicated ECG and/or header subject mismatch).
+   (duplicated ECG and/or header subject mismatch; read from data/subjects.csv).
 2. Sensor channel: raw current vs calibrated force.
 3. Number of cycles: first cycle only vs all cycles.
 4. Test-time noise (SNR 30-0 dB) and decimation (1/2, 1/3 of samples) for models trained on clean data.
@@ -24,10 +24,12 @@ from sklearn.model_selection import StratifiedKFold
 from evaluation import repeated_cv_oof, summarise
 from features import jvp_subject_features, minmax, resample_cycle
 from models import CNNModel, RocketModel, RuleModel, TabularModel
+from features import ECG12_FEATS
 from run_benchmark import HYBRID_FEATS, JVP_FEATS, load
 
 HERE = Path(__file__).parent
-QC_EXCLUDE = ["HS31", "HS42", "HS43", "HS48", "HS52"]
+_s = pd.read_csv(HERE / "data/subjects.csv")
+QC_EXCLUDE = list(_s.subject[(_s.qc_ecg_duplicate == 1) | (_s.qc_header_mismatch == 1)])
 
 
 def core_models(J, E, waves, quick=False):
@@ -38,7 +40,7 @@ def core_models(J, E, waves, quick=False):
         "JVP ROCKET": lambda s: RocketModel(waves, s),
         "JVP 1D-CNN": lambda s: CNNModel(waves, epochs=ep, seeds=(s, s + 100)),  # primary sensor model
         "JVP L1-LR": lambda s: TabularModel("L1LR", J[JVP_FEATS], s),
-        "ECG LR V1/V2": lambda s: TabularModel("LR", E, s),
+        "ECG LR 12-lead": lambda s: TabularModel("LR", E[ECG12_FEATS], s),
     }
 
 
@@ -100,16 +102,23 @@ def agreement(sub, J, E):
     ok = ~sub.subject.isin(QC_EXCLUDE).values
     out = {"n": int(ok.sum())}
     jf = ["vc_ratio", "slope_a_to_c", "y_descent", "amp_c", "relphase3_sin", "phase_x_to_v", "beat_consistency"]
-    ef = ["V1_R_mV", "V1_S_mV", "V1_RS_ratio", "V1_PR_ms", "V1_QRS_ms", "V2_R_mV", "V2_S_mV", "V2_T_mV", "V1_beat_ms"]
+    ef = ["V1_R_mV", "V1_S_mV", "V4_R_mV", "SokolowLyon_RVH_mV", "SokolowLyon_LVH_mV", "QRS_axis_deg",
+          "QRS_global_ms", "PR_II_ms", "QTc_ms", "beat_ms"]
     C = pd.DataFrame(index=jf, columns=ef, dtype=float); Pv = C.copy()
     for a in jf:
         for b in ef:
             rr, pp = spearmanr(J[a].values[ok], E[b].values[ok]); C.loc[a, b] = rr; Pv.loc[a, b] = pp
     C.to_csv(HERE / "results/jvp_ecg_spearman_r.csv"); Pv.to_csv(HERE / "results/jvp_ecg_spearman_p.csv")
     rule = (J["vc_ratio"] > 1).astype(int).values
-    rvh = ((E["V1_R_mV"] >= 0.7) | (E["V1_RS_ratio"] >= 1)).astype(int).values
+    rvh = E["RVH_any_criterion"].astype(int).values
     y = sub.y.values
     out["ecg_rvh_criteria_sens"] = float(rvh[y == 1].mean()); out["ecg_rvh_criteria_spec"] = float(1 - rvh[y == 0].mean())
+    rvh2 = ((E["V1_R_mV"] >= 0.7) | (E["V1_RS_ratio"] >= 1)).astype(int).values
+    out["ecg_rvh_v1_criteria_sens"] = float(rvh2[y == 1].mean()); out["ecg_rvh_v1_criteria_spec"] = float(1 - rvh2[y == 0].mean())
+    out["n_rvh_v1_tp"] = int(rvh2[y == 1].sum())
+    for k in ["RVH_crit_RV1_ge_0.7", "RVH_crit_RS_V1_ge_1", "RVH_crit_SL_gt_1.05", "RVH_crit_S_V5V6_ge_0.7",
+              "RVH_crit_RS_V6_le_1", "RVH_crit_RAD", "LVH_crit_SL_ge_3.5"]:
+        out[f"n_pos_{k}"] = [int(E[k].values[y == 0].sum()), int(E[k].values[y == 1].sum())]
     out["rule_sens"] = float(rule[y == 1].mean()); out["rule_spec"] = float(1 - rule[y == 0].mean())
     out["n_rvh_tp"] = int(rvh[y == 1].sum()); out["n_rule_tp"] = int(rule[y == 1].sum()); out["n_rule_tn"] = int((1 - rule)[y == 0].sum())
     return out

@@ -1,56 +1,67 @@
 {
   "univariate_vc_ratio_auc": [
     0.7409420289855072,
-    0.5815217391304348,
-    0.878623188405797
+    0.5797101449275363,
+    0.8768115942028986
   ],
   "vc_ratio_mannwhitney_p": 0.010978630342425057,
   "delong": {
-    "JVP | LR physiology features vs ECG | LR V1/V2 features": {
-      "auc1": 0.8605072463768115,
-      "auc2": 0.8731884057971016,
-      "p": 0.8961866381617133
+    "JVP | LR physiology features vs ECG | LR 12-lead features": {
+      "auc1": 0.8623188405797102,
+      "auc2": 0.9039855072463769,
+      "p": 0.594174049665884
     },
-    "JVP | 1D-CNN waveform vs ECG | 1D-CNN V1/V2 beat": {
-      "auc1": 0.9347826086956521,
-      "auc2": 0.8731884057971016,
-      "p": 0.3275880592017275
+    "JVP | 1D-CNN waveform vs ECG | 1D-CNN 12-lead beat": {
+      "auc1": 0.9166666666666667,
+      "auc2": 0.980072463768116,
+      "p": 0.25316850662703727
     },
-    "JVP | Physio-hybrid CNN (waveform + v/c, a-c slope) vs ECG | LR V1/V2 features": {
-      "auc1": 0.9148550724637681,
-      "auc2": 0.8731884057971016,
-      "p": 0.6179870903055587
+    "JVP | Physio-hybrid CNN (waveform + v/c, a-c slope) vs ECG | LR 12-lead features": {
+      "auc1": 0.911231884057971,
+      "auc2": 0.9039855072463769,
+      "p": 0.9393288715933302
     },
-    "JVP | 1D-CNN waveform vs ECG | LR V1/V2 features": {
-      "auc1": 0.9347826086956521,
-      "auc2": 0.8731884057971016,
-      "p": 0.33264739479859895
+    "JVP | 1D-CNN waveform vs ECG | LR 12-lead features": {
+      "auc1": 0.9166666666666667,
+      "auc2": 0.9039855072463769,
+      "p": 0.8838224201886576
     },
-    "JVP | L1-LR physiology features (embedded selection) vs ECG | LR V1/V2 features": {
-      "auc1": 0.9420289855072463,
-      "auc2": 0.8731884057971016,
-      "p": 0.2727484874874694
+    "JVP | L1-LR physiology features (embedded selection) vs ECG | LR 12-lead features": {
+      "auc1": 0.9365942028985508,
+      "auc2": 0.9039855072463769,
+      "p": 0.665248741383566
+    },
+    "ECG | LR 12-lead features vs ECG | LR V1/V2 features": {
+      "auc1": 0.9039855072463769,
+      "auc2": 0.923913043478261,
+      "p": 0.8218150406570375
     }
   },
-  "kappa_JVP_LR_vs_ECG_LR": 0.33990895295902884,
+  "kappa_JVP_LR_vs_ECG_LR": 0.6040955631399315,
   "permutation": {
     "JVP | LR physiology features": {
-      "observed_auroc": 0.8419082125603865,
+      "observed_auroc": 0.8282608695652175,
       "p": 0.004975124378109453,
-      "null_mean": 0.4895727657004831,
-      "null_95": 0.6252415458937197
+      "null_mean": 0.5028230676328502,
+      "null_95": 0.6437499999999999
     },
-    "ECG | LR V1/V2 features": {
-      "observed_auroc": 0.8433574879227054,
+    "ECG | LR 12-lead features": {
+      "observed_auroc": 0.8721920289855073,
       "p": 0.004975124378109453,
-      "null_mean": 0.4995818236714976,
-      "null_95": 0.6333182367149758
+      "null_mean": 0.5079725241545894,
+      "null_95": 0.6425271739130436
     },
     "JVP | LR log(v/c) only": {
-      "observed_auroc": 0.7320652173913044,
-      "p": 0.009950248756218905,
-      "null_mean": 0.4861835748792271,
-      "null_95": 0.6289251207729467
+      "observed_auroc": 0.7371376811594204,
+      "p": 0.004975124378109453,
+      "null_mean": 0.4890519323671497,
+      "null_95": 0.6389492753623188
+    },
+    "JVP | L1-LR physiology features (embedded selection)": {
+      "observed_auroc": 0.9000603864734299,
+      "p": 0.004975124378109453,
+      "null_mean": 0.4992481884057971,
+      "null_95": 0.6155797101449271
     }
   }
 }

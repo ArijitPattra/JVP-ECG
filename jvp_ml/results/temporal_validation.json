@@ -31,25 +31,33 @@
   },
   "per_batch_auroc": {
     "JVP 1D-CNN": {
-      "first_batch_diseased": 0.8804347826086957,
-      "later_batch_diseased": 0.9891304347826088
+      "first_batch_diseased": 0.8405797101449276,
+      "later_batch_diseased": 0.9927536231884059
     },
     "JVP L1-LR": {
-      "first_batch_diseased": 0.9094202898550725,
+      "first_batch_diseased": 0.8985507246376812,
       "later_batch_diseased": 0.9746376811594203
     },
     "JVP Fourier LR": {
-      "first_batch_diseased": 0.782608695652174,
-      "later_batch_diseased": 0.9710144927536232
+      "first_batch_diseased": 0.8478260869565217,
+      "later_batch_diseased": 0.963768115942029
     },
     "ECG LR": {
-      "first_batch_diseased": 0.9057971014492754,
-      "later_batch_diseased": 0.8405797101449276
+      "first_batch_diseased": 0.822463768115942,
+      "later_batch_diseased": 0.9855072463768116
+    },
+    "ECG 1D-CNN": {
+      "first_batch_diseased": 0.9601449275362319,
+      "later_batch_diseased": 1.0
+    },
+    "ECG RF": {
+      "first_batch_diseased": 0.8405797101449276,
+      "later_batch_diseased": 1.0
     }
   },
   "batch_signature_among_diseased": {
-    "L1-LR all features": 0.5166666666666667,
-    "LR Fourier descriptors": 0.49537037037037035,
+    "L1-LR all features": 0.4935185185185185,
+    "LR Fourier descriptors": 0.4944444444444445,
     "samples_per_window_median": {
       "first_batch_diseased": 12.0,
       "later_batch_diseased": 10.0,
@@ -85,8 +93,8 @@
     "fs_auroc_lower_is_disease_pooled": 0.7445652173913043,
     "fs_auroc_lower_is_disease_first_batch": 0.5615942028985508,
     "cnn_score_vs_fs_controls_spearman": {
-      "rho": 0.09540843077094686,
-      "p": 0.5282206662619876
+      "rho": 0.1356810263064532,
+      "p": 0.3686123802832231
     }
   }
 }

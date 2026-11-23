@@ -72,7 +72,7 @@ def train(out):
     print(json.dumps(meta, indent=2))
 
 
-def read_input(path, channel):
+def read_input(path, channel, subjects=None):
     path = Path(path)
     col = {"force": "jvp_F", "current": "jvp_I"}[channel]
     windows = {}
@@ -82,7 +82,7 @@ def read_input(path, channel):
             windows.setdefault(str(p), []).append(g["value"].to_numpy(float))
         return windows
     from load_data import _hash, read_workbook
-    for sd in sorted(q for q in path.iterdir() if q.is_dir()):
+    for sd in sorted(q for q in path.iterdir() if q.is_dir() and (subjects is None or q.name in subjects)):
         seen = set()
         for f in sorted(sd.glob("JVP_*_Cycle*.xlsx")):
             x = np.asarray(read_workbook(f)[col], float)  # sensor column only
@@ -93,14 +93,14 @@ def read_input(path, channel):
 
 
 @torch.no_grad()
-def predict(model_dir, inp, channel, out):
+def predict(model_dir, inp, channel, out, subjects=None):
     model_dir = Path(model_dir); meta = json.load(open(model_dir / "model.json"))
     nets = []
     for i in range(len(meta["seeds"])):
         net = CNN1D(2, 16, 0, circular=True); net.load_state_dict(torch.load(model_dir / f"cnn_seed{i}.pt")); net.eval()
         nets.append(net)
     rows = []
-    for pid, ws in read_input(inp, channel).items():
+    for pid, ws in read_input(inp, channel, subjects).items():
         R = np.array([jvp_cycle_features(w)[1] for w in ws if len(w) >= 4], dtype=np.float32)
         L = R.shape[1]
         ps = [torch.sigmoid(n(torch.from_numpy(two_channel(np.roll(R, sh, axis=1))))).numpy()

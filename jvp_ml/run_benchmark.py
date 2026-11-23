@@ -1,4 +1,6 @@
-"""Main benchmark: sensor-only JVP models vs ECG (V1/V2) comparator models, subject-level CV.
+"""Main benchmark: sensor-only JVP models vs 12-lead ECG comparator models, subject-level CV.
+
+The two-lead (V1/V2) ECG models of the earlier analysis are kept as secondary comparators.
 
 Intended use: the sensor alone at deployment; ECG models serve only as a benchmark, so no model combines the two.
 
@@ -15,7 +17,7 @@ import pandas as pd
 
 from evaluation import (bootstrap_auc_ci, cohen_kappa, delong_paired, permutation_pvalue,
                         repeated_cv_oof, summarise)
-from features import ecg_subject_features, ecg_waveforms, jvp_subject_features
+from features import ECG12_FEATS, ECG_V1V2_FEATS, ecg_subject_features, ecg_waveforms, jvp_subject_features
 from models import CNNModel, RocketModel, RuleModel, TabularModel
 
 HERE = Path(__file__).parent
@@ -28,6 +30,8 @@ JVP_FEATS = ["vc_ratio", "va_ratio", "ca_ratio", "amp_v", "amp_c", "amp_a", "y_d
 FOURIER_FEATS = ["harm1", "harm2", "harm3", "harm4", "harm5", "harm6", "relphase2_cos", "relphase2_sin",
                  "relphase3_cos", "relphase3_sin", "relphase4_cos", "relphase4_sin"]
 HYBRID_FEATS = ["vc_ratio", "slope_a_to_c"]  # the two a-priori clinical hypotheses
+ECG_REF = "ECG | LR 12-lead features"  # reference ECG comparator (fixed in advance; the best ECG model is also reported)
+ECG_CNN = "ECG | 1D-CNN 12-lead beat"
 
 
 def load(signal="force_N", exclude=()):
@@ -45,7 +49,7 @@ def load(signal="force_N", exclude=()):
 
 
 def model_zoo(J, E, waves, ecg_cycles, cnn_epochs=120):
-    JX, EX = J[JVP_FEATS], E
+    JX, EX, E2 = J[JVP_FEATS], E[ECG12_FEATS], E[ECG_V1V2_FEATS]
     zoo = {
         "JVP | rule v/c>1 (no training)": ("JVP", lambda s: RuleModel(J["vc_ratio"])),
         "JVP | LR log(v/c) only": ("JVP", lambda s: TabularModel("LR", np.log(J[["vc_ratio"]]), s)),
@@ -58,10 +62,12 @@ def model_zoo(J, E, waves, ecg_cycles, cnn_epochs=120):
     zoo["JVP | 1D-CNN waveform"] = ("JVP", lambda s: CNNModel(waves, epochs=cnn_epochs, seeds=(s, s + 100, s + 200)))
     zoo["JVP | Physio-hybrid CNN (waveform + v/c, a-c slope)"] = (
         "JVP", lambda s: CNNModel(waves, extra=J[HYBRID_FEATS], epochs=cnn_epochs, seeds=(s, s + 100, s + 200)))
-    for name in ("LR", "SVM", "RF", "GBM"):
-        zoo[f"ECG | {name} V1/V2 features"] = ("ECG", lambda s, n=name: TabularModel(n, EX, s))
-    zoo["ECG | 1D-CNN V1/V2 beat"] = ("ECG", lambda s: CNNModel(ecg_cycles, epochs=cnn_epochs, c_in=2,
-                                                                 seeds=(s, s + 100, s + 200)))
+    for name in ("LR", "L1LR", "SVM", "RF", "GBM"):
+        nm = "L1-LR" if name == "L1LR" else name
+        zoo[f"ECG | {nm} 12-lead features"] = ("ECG", lambda s, n=name: TabularModel(n, EX, s))
+    zoo[ECG_CNN] = ("ECG", lambda s: CNNModel(ecg_cycles, epochs=cnn_epochs, c_in=12, seeds=(s, s + 100, s + 200)))
+    for name in ("LR", "RF"):  # the earlier two-lead comparators (secondary)
+        zoo[f"ECG | {name} V1/V2 features"] = ("ECG", lambda s, n=name: TabularModel(n, E2, s))
     return zoo
 
 
@@ -102,22 +108,23 @@ def main():
     st["univariate_vc_ratio_auc"] = vc_auc
     from scipy.stats import mannwhitneyu
     st["vc_ratio_mannwhitney_p"] = float(mannwhitneyu(J.vc_ratio[y == 1], J.vc_ratio[y == 0]).pvalue)
-    pairs = [("JVP | LR physiology features", "ECG | LR V1/V2 features"),
-             ("JVP | 1D-CNN waveform", "ECG | 1D-CNN V1/V2 beat"),
-             ("JVP | Physio-hybrid CNN (waveform + v/c, a-c slope)", "ECG | LR V1/V2 features"),
-             ("JVP | 1D-CNN waveform", "ECG | LR V1/V2 features"),
-             ("JVP | L1-LR physiology features (embedded selection)", "ECG | LR V1/V2 features")]
+    pairs = [("JVP | LR physiology features", ECG_REF),
+             ("JVP | 1D-CNN waveform", ECG_CNN),
+             ("JVP | Physio-hybrid CNN (waveform + v/c, a-c slope)", ECG_REF),
+             ("JVP | 1D-CNN waveform", ECG_REF),
+             ("JVP | L1-LR physiology features (embedded selection)", ECG_REF),
+             (ECG_REF, "ECG | LR V1/V2 features")]
     st["delong"] = {}
     for p1, p2 in pairs:
         a1, a2, p = delong_paired(y, P_all[p1].mean(0), P_all[p2].mean(0))
         st["delong"][f"{p1} vs {p2}"] = dict(auc1=a1, auc2=a2, p=p)
     kap = cohen_kappa(P_all["JVP | LR physiology features"].mean(0) >= 0.5,
-                      P_all["ECG | LR V1/V2 features"].mean(0) >= 0.5)
+                      P_all[ECG_REF].mean(0) >= 0.5)
     st["kappa_JVP_LR_vs_ECG_LR"] = kap
     if a.perms > 0:
         st["permutation"] = {}
-        for name in ["JVP | LR physiology features", "ECG | LR V1/V2 features",
-                     "JVP | LR log(v/c) only"]:
+        for name in ["JVP | LR physiology features", ECG_REF, "JVP | LR log(v/c) only",
+                     "JVP | L1-LR physiology features (embedded selection)"]:
             obs = summ.set_index("model").loc[name, "auroc"]
             p, null = permutation_pvalue(zoo[name][1], S, y, obs, n_perm=(20 if a.quick else a.perms))
             st["permutation"][name] = dict(observed_auroc=obs, p=p, null_mean=float(null.mean()),
